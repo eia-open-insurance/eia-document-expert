@@ -1,5 +1,6 @@
 package com.eia.document.expert;
 
+import com.eia.platform.libs.outbox.OutboxRepository;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.autoconfigure.web.servlet.WebMvcTest;
@@ -34,6 +35,9 @@ class DocumentControllerTest {
 
     @MockitoBean
     private DocumentRepository repository;
+
+    @MockitoBean
+    private OutboxRepository outbox;
 
     @Test
     void createsDocumentAndReturnsGeneratedNumber() throws Exception {
