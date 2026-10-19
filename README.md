@@ -21,6 +21,19 @@ Document persistence, invariants, read models, batch jobs, Quartz schedules, and
 - Maintain README, CODEOWNERS, SECURITY, CHANGELOG, tests, and local verification.
 - Contain no business logic in shared libraries or front-end remotes.
 
+## Local run
+
+```powershell
+$env:JAVA_HOME='C:\Program Files\Eclipse Adoptium\jdk-22.0.2.9-hotspot'
+.\gradlew.bat build
+.\gradlew.bat bootRun
+```
+
+- Port: `8095`.
+- Database: `eia_document` on `localhost:5432` (user `postgres`, password `postgres`). `schema.sql` creates the `document` table and sequence on start.
+- Internal API: `GET|POST /internal/v1/documents`, `GET /internal/v1/documents/{id}`, `POST /internal/v1/documents/{id}/status`.
+- The repository integration test runs against PostgreSQL when `EIA_TEST_DB=true` is set; otherwise it is skipped.
+
 ## Verification
 
 - Lint and format
