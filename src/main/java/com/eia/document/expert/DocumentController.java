@@ -20,8 +20,23 @@ public class DocumentController {
     }
 
     @GetMapping
-    public List<Document> list(@RequestParam UUID tenantId) {
-        return service.list(tenantId);
+    public List<Document> list(@RequestParam UUID tenantId,
+                               @RequestParam(name = "linkedType", required = false) String linkedType,
+                               @RequestParam(name = "linkedId", required = false) UUID linkedId,
+                               @RequestParam(name = "q", required = false) String q) {
+        return service.list(tenantId, linkedType, linkedId, q);
+    }
+
+    /**
+     * Internal search projection. The public surface lives on
+     * {@link DocumentQueryController}; this alias keeps the expert's own API
+     * usable by the domain's eventually-consistent read path.
+     */
+    @GetMapping("/search")
+    public DocumentSearchResponse search(@RequestParam UUID tenantId,
+                                         @RequestParam(name = "q", required = false) String q,
+                                         @RequestParam(name = "limit", defaultValue = "10") int limit) {
+        return service.search(tenantId, q, limit);
     }
 
     @GetMapping("/{id}")

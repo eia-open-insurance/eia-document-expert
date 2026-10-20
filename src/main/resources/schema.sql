@@ -21,6 +21,29 @@ CREATE INDEX IF NOT EXISTS idx_document_tenant_created
 CREATE INDEX IF NOT EXISTS idx_document_tenant_status
     ON document (tenant_id, status);
 
+-- A document may be associated with records owned by other verticals. The
+-- target id is authoritative in its owning vertical; linked_reference is only
+-- a display snapshot. Idempotent so schema.sql can run on every start.
+CREATE TABLE IF NOT EXISTS document_link (
+    id UUID PRIMARY KEY,
+    tenant_id UUID NOT NULL,
+    document_id UUID NOT NULL,
+    linked_type VARCHAR(32) NOT NULL,
+    linked_id UUID NOT NULL,
+    linked_reference VARCHAR(64),
+    created_at TIMESTAMPTZ NOT NULL,
+    CONSTRAINT fk_document_link_document
+        FOREIGN KEY (document_id) REFERENCES document (id),
+    CONSTRAINT uq_document_link_subject
+        UNIQUE (tenant_id, document_id, linked_type, linked_id),
+    CONSTRAINT ck_document_link_linked_type
+        CHECK (linked_type IN ('DIRECT_CLAIM', 'ASSUMED_CLAIM', 'POLICY', 'CONTRACT',
+                               'PARTY', 'PAYMENT', 'OTHER'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_document_link_subject
+    ON document_link (tenant_id, linked_type, linked_id);
+
 -- Transactional outbox (SPEC 7.5.1). The canonical copy lives in
 -- eia-platform/libs/src/main/resources/db/outbox_event.sql; keep both in sync.
 CREATE TABLE IF NOT EXISTS outbox_event (

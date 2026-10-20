@@ -11,7 +11,9 @@ import java.time.LocalDate;
 import java.time.OffsetDateTime;
 import java.time.Year;
 import java.time.ZoneOffset;
+import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 import java.util.Optional;
 import java.util.UUID;
 
@@ -35,12 +37,67 @@ public class DocumentRepository {
     }
 
     public List<Document> findAll(UUID tenantId) {
-        return jdbc.query("""
+        return findAll(tenantId, null, null, null);
+    }
+
+    /**
+     * Tenant-scoped list with the link filter used by the public document list
+     * and the free-text term used by search. {@code q} matches the document
+     * number, title, and type, and also the reference snapshot of any link, so
+     * a user can find a document by the claim or policy number it is filed
+     * against.
+     *
+     * <p>{@code linkedType} and {@code linkedId} are supplied together; the
+     * service rejects a partial pair before reaching this method.</p>
+     */
+    public List<Document> findAll(UUID tenantId, String linkedType, UUID linkedId, String q) {
+        StringBuilder sql = new StringBuilder("""
                 SELECT %s
                   FROM document
                  WHERE tenant_id = ?
-                 ORDER BY created_at DESC, document_number DESC
-                """.formatted(COLUMNS), MAPPER, tenantId);
+                """.formatted(COLUMNS));
+        List<Object> args = new ArrayList<>();
+        args.add(tenantId);
+
+        if (linkedType != null) {
+            sql.append("""
+                      AND EXISTS (
+                            SELECT 1
+                              FROM document_link l
+                             WHERE l.tenant_id = document.tenant_id
+                               AND l.document_id = document.id
+                               AND l.linked_type = ?
+                               AND l.linked_id = ?
+                          )
+                    """);
+            args.add(linkedType);
+            args.add(linkedId);
+        }
+
+        if (q != null) {
+            String pattern = likePattern(q);
+            sql.append("""
+                      AND (
+                            LOWER(document_number) LIKE ? ESCAPE '!'
+                         OR LOWER(title) LIKE ? ESCAPE '!'
+                         OR LOWER(document_type) LIKE ? ESCAPE '!'
+                         OR EXISTS (
+                                SELECT 1
+                                  FROM document_link l
+                                 WHERE l.tenant_id = document.tenant_id
+                                   AND l.document_id = document.id
+                                   AND LOWER(l.linked_reference) LIKE ? ESCAPE '!'
+                            )
+                          )
+                    """);
+            args.add(pattern);
+            args.add(pattern);
+            args.add(pattern);
+            args.add(pattern);
+        }
+
+        sql.append(" ORDER BY created_at DESC, document_number DESC");
+        return jdbc.query(sql.toString(), MAPPER, args.toArray());
     }
 
     public Optional<Document> findById(UUID tenantId, UUID id) {
@@ -86,6 +143,14 @@ public class DocumentRepository {
         long value = sequence == null ? 0L : sequence;
         return "DOC-" + Year.of(now.atZone(ZoneOffset.UTC).getYear())
                 + "-" + String.format("%07d", value);
+    }
+
+    private static String likePattern(String raw) {
+        String needle = raw.trim().toLowerCase(Locale.ROOT)
+                .replace("!", "!!")
+                .replace("%", "!%")
+                .replace("_", "!_");
+        return "%" + needle + "%";
     }
 
     private static Document map(ResultSet rs, int rowNum) throws SQLException {

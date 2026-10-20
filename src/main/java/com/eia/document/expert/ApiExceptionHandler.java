@@ -14,7 +14,8 @@ import java.util.List;
 
 /**
  * Maps document failures onto structured HTTP responses: 400 for invalid input
- * and rule violations, 404 for an unknown document, 409 for a version conflict.
+ * and rule violations, 404 for an unknown document or link, 409 for a version
+ * conflict or a duplicate link.
  */
 @RestControllerAdvice
 public class ApiExceptionHandler {
@@ -34,6 +35,18 @@ public class ApiExceptionHandler {
     @ResponseStatus(HttpStatus.CONFLICT)
     public ApiError versionConflict(VersionConflictException ex) {
         return new ApiError("VERSION_CONFLICT", ex.getMessage());
+    }
+
+    @ExceptionHandler(DuplicateLinkException.class)
+    @ResponseStatus(HttpStatus.CONFLICT)
+    public ApiError duplicateLink(DuplicateLinkException ex) {
+        return new ApiError("DUPLICATE_LINK", ex.getMessage());
+    }
+
+    @ExceptionHandler(DocumentLinkNotFoundException.class)
+    @ResponseStatus(HttpStatus.NOT_FOUND)
+    public ApiError linkNotFound(DocumentLinkNotFoundException ex) {
+        return new ApiError("LINK_NOT_FOUND", ex.getMessage());
     }
 
     @ExceptionHandler(MethodArgumentNotValidException.class)

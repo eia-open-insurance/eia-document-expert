@@ -26,6 +26,15 @@ class DocumentRulesTest {
     }
 
     @Test
+    void definesTheDocumentLinkTypes() {
+        assertThat(LinkedType.values()).hasSize(7);
+        assertThat(LinkedType.find("DIRECT_CLAIM")).contains(LinkedType.DIRECT_CLAIM);
+        assertThat(LinkedType.find("OTHER")).contains(LinkedType.OTHER);
+        assertThat(LinkedType.find("direct_claim")).isEmpty();
+        assertThat(LinkedType.names()).contains("ASSUMED_CLAIM", "PAYMENT", "OTHER");
+    }
+
+    @Test
     void followsTheSpecificationLifecycleEdges() {
         assertThat(DocumentStatus.PENDING_UPLOAD.allowedNext()).containsExactly(DocumentStatus.RECEIVED);
         assertThat(DocumentStatus.RECEIVED.canTransitionTo(DocumentStatus.SCANNING)).isTrue();

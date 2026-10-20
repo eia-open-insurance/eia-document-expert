@@ -37,6 +37,9 @@ class DocumentControllerTest {
     private DocumentRepository repository;
 
     @MockitoBean
+    private DocumentLinkRepository linkRepository;
+
+    @MockitoBean
     private OutboxRepository outbox;
 
     @Test
@@ -193,6 +196,19 @@ class DocumentControllerTest {
                         .content("{not json"))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.code").value("MALFORMED_REQUEST"));
+    }
+
+    @Test
+    void exposesInternalSearchAlias() throws Exception {
+        when(repository.findAll(TENANT, null, null, "DOC-2026"))
+                .thenReturn(java.util.List.of(document("RECEIVED", RETENTION, 0)));
+
+        mockMvc.perform(get("/internal/v1/documents/search")
+                        .param("tenantId", TENANT.toString())
+                        .param("q", "DOC-2026"))
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.query").value("DOC-2026"))
+                .andExpect(jsonPath("$.items[0].label").value("DOC-2026-0000001"));
     }
 
     private static Document document(String status, LocalDate retentionUntil, int version) {

@@ -30,8 +30,20 @@ $env:JAVA_HOME='C:\Program Files\Eclipse Adoptium\jdk-22.0.2.9-hotspot'
 ```
 
 - Port: `8095`.
-- Database: `eia_document` on `localhost:5432` (user `postgres`, password `postgres`). `schema.sql` creates the `document` table and sequence on start.
-- Internal API: `GET|POST /internal/v1/documents`, `GET /internal/v1/documents/{id}`, `POST /internal/v1/documents/{id}/status`.
+- Database: `eia_document` on `localhost:5432` (user `postgres`, password `postgres`). `schema.sql` creates the `document`, `document_link`, and outbox tables on start; the DDL is idempotent.
+- Internal API: `GET|POST /internal/v1/documents`, `GET /internal/v1/documents/{id}`, `POST /internal/v1/documents/{id}/status`, `GET /internal/v1/documents/search`.
+- Public read/link API:
+  - `GET /api/v1/documents?linkedType=&linkedId=&q=` — list; the link pair filters documents associated with that subject, and `q` matches document metadata or any link's `linkedReference`.
+  - `GET /api/v1/documents/search?q=&limit=` — EntityPicker-compatible `{query, limit, items}` envelope; `limit` is clamped to 1–25.
+  - `GET /api/v1/documents/{documentId}/links` — list links.
+  - `POST /api/v1/documents/{documentId}/links` — create a link, `201`; body `{linkedType, linkedId, linkedReference?}`.
+  - `DELETE /api/v1/documents/{documentId}/links/{linkId}` — remove a link, `204`.
+  - The same link routes are also exposed under `/internal/v1/documents`.
+  - The tenant comes from `X-EIA-Tenant`; the internal `tenantId` query parameter is accepted as a fallback. A document or link outside the tenant is `404`.
+  - `linkedType` is one of `DIRECT_CLAIM`, `ASSUMED_CLAIM`, `POLICY`, `CONTRACT`, `PARTY`, `PAYMENT`, `OTHER`. `linkedId` is required for every type; `linkedReference` is optional, at most 64 characters.
+  - A duplicate `(tenant, document, linkedType, linkedId)` is `409 DUPLICATE_LINK`; no second row or event is written.
+  - The link DTO is `{id, documentId, linkedType, linkedId, linkedReference, linkedLabel, createdAt}`; `linkedLabel` is the reference, or the first eight characters of `linkedId` when no reference was supplied.
+  - Link writes append `document.link-added` / `document.link-removed` outbox rows in the same transaction. These are the two-segment names required by the link contract; the shared `EventEnvelope` requires three segments, so the rows are assembled with the canonical headers/data directly.
 - The repository integration test runs against PostgreSQL when `EIA_TEST_DB=true` is set; otherwise it is skipped.
 
 ## Verification

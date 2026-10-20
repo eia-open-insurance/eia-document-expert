@@ -3,6 +3,7 @@ package com.eia.document.expert;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.ZoneOffset;
+import java.util.UUID;
 
 /**
  * Document invariants from SPEC section 11.6.
@@ -28,8 +29,32 @@ public final class DocumentRules {
     public static final String INVALID_STATUS_TRANSITION = "INVALID_STATUS_TRANSITION";
     public static final String RETENTION_BEFORE_CREATION = "RETENTION_BEFORE_CREATION";
     public static final String RETENTION_REQUIRED_FOR_ACTIVE = "RETENTION_REQUIRED_FOR_ACTIVE";
+    public static final String INVALID_LINKED_TYPE = "INVALID_LINKED_TYPE";
+    public static final String INVALID_LINK_FILTER = "INVALID_LINK_FILTER";
 
     private DocumentRules() {}
+
+    /**
+     * Resolves the closed link-type vocabulary. The API accepts the enum name
+     * exactly, matching the other enumerations in this vertical.
+     */
+    public static LinkedType requireLinkedType(String raw) {
+        return LinkedType.find(raw).orElseThrow(() -> new DocumentRuleException(
+                INVALID_LINKED_TYPE,
+                "linkedType '" + raw + "' is not defined by the document contract; expected one of: "
+                        + LinkedType.names()));
+    }
+
+    /**
+     * A list filter is either absent or a complete {@code linkedType} +
+     * {@code linkedId} pair; half a pair would silently widen the result.
+     */
+    public static void validateLinkFilter(String linkedType, UUID linkedId) {
+        if ((linkedType == null) != (linkedId == null)) {
+            throw new DocumentRuleException(INVALID_LINK_FILTER,
+                    "linkedType and linkedId must be supplied together");
+        }
+    }
 
     public static void validateCreate(CreateDocumentRequest request, Instant now) {
         if (DocumentType.find(request.documentType()).isEmpty()) {

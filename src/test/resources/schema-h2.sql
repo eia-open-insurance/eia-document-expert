@@ -15,6 +15,27 @@ CREATE TABLE IF NOT EXISTS document (
     CONSTRAINT uq_document_number UNIQUE (tenant_id, document_number)
 );
 
+-- H2-compatible copy of the document_link table.
+CREATE TABLE IF NOT EXISTS document_link (
+    id UUID PRIMARY KEY,
+    tenant_id UUID NOT NULL,
+    document_id UUID NOT NULL,
+    linked_type VARCHAR(32) NOT NULL,
+    linked_id UUID NOT NULL,
+    linked_reference VARCHAR(64),
+    created_at TIMESTAMP WITH TIME ZONE NOT NULL,
+    CONSTRAINT fk_document_link_document
+        FOREIGN KEY (document_id) REFERENCES document (id),
+    CONSTRAINT uq_document_link_subject
+        UNIQUE (tenant_id, document_id, linked_type, linked_id),
+    CONSTRAINT ck_document_link_linked_type
+        CHECK (linked_type IN ('DIRECT_CLAIM', 'ASSUMED_CLAIM', 'POLICY', 'CONTRACT',
+                               'PARTY', 'PAYMENT', 'OTHER'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_document_link_subject
+    ON document_link (tenant_id, linked_type, linked_id);
+
 -- H2-compatible copy of the PostgreSQL outbox table. JSON payloads are TEXT
 -- here; production DDL uses jsonb.
 CREATE TABLE IF NOT EXISTS outbox_event (

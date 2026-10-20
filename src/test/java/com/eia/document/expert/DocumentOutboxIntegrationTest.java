@@ -38,6 +38,7 @@ class DocumentOutboxIntegrationTest {
     void clean() {
         transaction = new TransactionTemplate(transactionManager);
         jdbc.update("DELETE FROM outbox_event");
+        jdbc.update("DELETE FROM document_link");
         jdbc.update("DELETE FROM document");
     }
 
