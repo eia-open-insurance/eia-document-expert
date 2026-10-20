@@ -74,7 +74,7 @@ class DocumentLinkControllerTest {
 
         ArgumentCaptor<OutboxEvent> event = ArgumentCaptor.forClass(OutboxEvent.class);
         verify(outbox).insert(event.capture());
-        assertThat(event.getValue().eventType()).isEqualTo("document.link-added");
+        assertThat(event.getValue().eventType()).isEqualTo("document.link.added");
         assertThat(event.getValue().payload())
                 .contains("\"documentNumber\":\"DOC-2026-0000001\"")
                 .contains("\"linkedType\":\"DIRECT_CLAIM\"")
@@ -172,7 +172,7 @@ class DocumentLinkControllerTest {
 
         ArgumentCaptor<OutboxEvent> event = ArgumentCaptor.forClass(OutboxEvent.class);
         verify(outbox).insert(event.capture());
-        assertThat(event.getValue().eventType()).isEqualTo("document.link-removed");
+        assertThat(event.getValue().eventType()).isEqualTo("document.link.removed");
         assertThat(event.getValue().payload())
                 .contains("\"linkId\":\"" + LINK_ID + "\"")
                 .contains("\"linkedReference\":\"CLM-2026-000042\"");

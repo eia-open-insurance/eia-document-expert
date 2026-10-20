@@ -113,7 +113,7 @@ public class DocumentService {
         } catch (DuplicateKeyException ex) {
             throw new DuplicateLinkException(documentId, linkedType.name(), request.linkedId());
         }
-        outbox.insert(DocumentLinkEvents.added(document, link, now));
+        outbox.insert(OutboxEvent.fromEnvelope(DocumentLinkEvents.added(document, link, now)));
         return DocumentLinkDto.from(link);
     }
 
@@ -131,7 +131,7 @@ public class DocumentService {
         if (!linkRepository.delete(tenantId, documentId, linkId)) {
             throw new DocumentLinkNotFoundException(linkId);
         }
-        outbox.insert(DocumentLinkEvents.removed(document, link, Instant.now()));
+        outbox.insert(OutboxEvent.fromEnvelope(DocumentLinkEvents.removed(document, link, Instant.now())));
     }
 
     @Transactional

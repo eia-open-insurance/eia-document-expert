@@ -1,5 +1,6 @@
 package com.eia.document.expert;
 
+import com.eia.platform.libs.outbox.OutboxRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -31,6 +32,9 @@ class DocumentLinkIntegrationTest {
 
     @Autowired
     private DocumentService service;
+
+    @Autowired
+    private OutboxRepository outboxRepository;
 
     @Autowired
     private JdbcTemplate jdbc;
@@ -70,13 +74,13 @@ class DocumentLinkIntegrationTest {
                 .containsExactly(added.id());
 
         List<Map<String, Object>> addedEvents = jdbc.queryForList("""
-                SELECT event_type, aggregate_type, aggregate_version, payload, headers
+                SELECT id, event_type, aggregate_type, aggregate_version, payload, headers
                   FROM outbox_event
                  WHERE aggregate_id = ?
                  ORDER BY event_sequence
                 """, added.id());
         assertThat(addedEvents).hasSize(1);
-        assertThat(addedEvents.getFirst().get("event_type")).isEqualTo("document.link-added");
+        assertThat(addedEvents.getFirst().get("event_type")).isEqualTo("document.link.added");
         assertThat(addedEvents.getFirst().get("aggregate_type")).isEqualTo("DocumentLink");
         assertThat(addedEvents.getFirst().get("aggregate_version")).isEqualTo(1L);
         String addedPayload = (String) addedEvents.getFirst().get("payload");
@@ -91,20 +95,39 @@ class DocumentLinkIntegrationTest {
                 .contains("\"book\":\"DIRECT\"")
                 .contains("\"vertical\":\"document\"");
 
+        var storedAdded = outboxRepository.findById((UUID) addedEvents.getFirst().get("id"))
+                .orElseThrow();
+        var addedEnvelope = storedAdded.toEnvelope();
+        assertThat(addedEnvelope.eventType()).isEqualTo("document.link.added");
+        assertThat(addedEnvelope.data())
+                .containsEntry("documentId", document.id().toString())
+                .containsEntry("documentNumber", document.documentNumber())
+                .containsEntry("linkId", added.id().toString())
+                .containsEntry("linkedType", "DIRECT_CLAIM")
+                .containsEntry("linkedId", CLAIM_ID.toString())
+                .containsEntry("linkedReference", "CLM-2026-000042");
+
         service.removeLink(TENANT, document.id(), added.id());
         assertThat(service.listLinks(TENANT, document.id())).isEmpty();
 
         Map<String, Object> removedEvent = jdbc.queryForMap("""
-                SELECT event_type, payload
+                SELECT id, event_type, payload
                   FROM outbox_event
-                 WHERE aggregate_id = ? AND event_type = 'document.link-removed'
+                 WHERE aggregate_id = ? AND event_type = 'document.link.removed'
                 """, added.id());
-        assertThat(removedEvent.get("event_type")).isEqualTo("document.link-removed");
+        assertThat(removedEvent.get("event_type")).isEqualTo("document.link.removed");
         assertThat((String) removedEvent.get("payload"))
                 .contains("\"documentId\":\"" + document.id() + "\"")
                 .contains("\"linkId\":\"" + added.id() + "\"")
                 .contains("\"linkedType\":\"DIRECT_CLAIM\"")
                 .contains("\"linkedId\":\"" + CLAIM_ID + "\"");
+        var removedEnvelope = outboxRepository.findById((UUID) removedEvent.get("id"))
+                .orElseThrow()
+                .toEnvelope();
+        assertThat(removedEnvelope.eventType()).isEqualTo("document.link.removed");
+        assertThat(removedEnvelope.data())
+                .containsEntry("documentId", document.id().toString())
+                .containsEntry("linkId", added.id().toString());
     }
 
     @Test
@@ -119,8 +142,8 @@ class DocumentLinkIntegrationTest {
                 .hasMessageContaining("already linked");
 
         assertThat(count("document_link")).isEqualTo(1);
-        assertThat(countLinkEvents(link.id(), "document.link-added")).isEqualTo(1);
-        assertThat(countLinkEvents(link.id(), "document.link-removed")).isZero();
+        assertThat(countLinkEvents(link.id(), "document.link.added")).isEqualTo(1);
+        assertThat(countLinkEvents(link.id(), "document.link.removed")).isZero();
     }
 
     @Test
@@ -149,7 +172,7 @@ class DocumentLinkIntegrationTest {
                 .isInstanceOf(DocumentNotFoundException.class);
 
         assertThat(count("document_link")).isEqualTo(1);
-        assertThat(countLinkEvents(link.id(), "document.link-removed")).isZero();
+        assertThat(countLinkEvents(link.id(), "document.link.removed")).isZero();
     }
 
     @Test
@@ -236,7 +259,7 @@ class DocumentLinkIntegrationTest {
 
         assertThat(count("document_link")).isZero();
         assertThat(count("outbox_event")).isEqualTo(1);
-        assertThat(countEvents("document.link-added")).isZero();
+        assertThat(countEvents("document.link.added")).isZero();
     }
 
     @Test
@@ -252,7 +275,7 @@ class DocumentLinkIntegrationTest {
 
         assertThat(service.listLinks(TENANT, document.id())).hasSize(1);
         assertThat(count("document_link")).isEqualTo(1);
-        assertThat(countLinkEvents(link.id(), "document.link-removed")).isZero();
+        assertThat(countLinkEvents(link.id(), "document.link.removed")).isZero();
     }
 
     @Test

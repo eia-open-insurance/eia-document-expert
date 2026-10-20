@@ -2,12 +2,10 @@ package com.eia.document.expert;
 
 import com.eia.platform.libs.events.Book;
 import com.eia.platform.libs.events.EventActor;
+import com.eia.platform.libs.events.EventEnvelope;
 import com.eia.platform.libs.events.EventIds;
-import com.eia.platform.libs.events.EventJson;
 import com.eia.platform.libs.events.EventMetadata;
 import com.eia.platform.libs.events.EventSubject;
-import com.eia.platform.libs.outbox.OutboxEvent;
-import com.eia.platform.libs.outbox.OutboxHeaders;
 
 import java.time.Instant;
 import java.util.LinkedHashMap;
@@ -16,20 +14,18 @@ import java.util.Map;
 import java.util.UUID;
 
 /**
- * Outbox rows for document association links.
+ * Events for document association links.
  *
- * <p>The link facts use the names requested by the link API:
- * {@code document.link-added} and {@code document.link-removed}. Those names
- * have two segments, whereas the shared canonical {@link
- * com.eia.platform.libs.events.EventEnvelope} requires three
- * ({@code vertical.aggregate.verb}); the row is therefore assembled directly
- * with the canonical headers and data instead of going through
- * {@code EventEnvelope}. The aggregate is {@code DocumentLink} so two links on
- * the same document cannot collide on the outbox aggregate-version key.</p>
+ * <p>The event types are canonical three-segment names
+ * ({@code document.link.added} / {@code document.link.removed}) so the shared
+ * {@link EventEnvelope} validation accepts them and the outbox dispatcher can
+ * reconstruct and publish them. The aggregate is {@code DocumentLink} with the
+ * link id and version 1, so two links on the same document cannot collide on
+ * the outbox aggregate-version key.</p>
  */
 final class DocumentLinkEvents {
-    static final String LINK_ADDED = "document.link-added";
-    static final String LINK_REMOVED = "document.link-removed";
+    static final String LINK_ADDED = "document.link.added";
+    static final String LINK_REMOVED = "document.link.removed";
 
     private static final String VERTICAL = "document";
     private static final String AGGREGATE_TYPE = "DocumentLink";
@@ -38,15 +34,15 @@ final class DocumentLinkEvents {
     private DocumentLinkEvents() {
     }
 
-    static OutboxEvent added(Document document, DocumentLink link, Instant now) {
-        return event(document, link, LINK_ADDED, now);
+    static EventEnvelope added(Document document, DocumentLink link, Instant now) {
+        return envelope(document, link, LINK_ADDED, now);
     }
 
-    static OutboxEvent removed(Document document, DocumentLink link, Instant now) {
-        return event(document, link, LINK_REMOVED, now);
+    static EventEnvelope removed(Document document, DocumentLink link, Instant now) {
+        return envelope(document, link, LINK_REMOVED, now);
     }
 
-    private static OutboxEvent event(
+    private static EventEnvelope envelope(
             Document document, DocumentLink link, String eventType, Instant now) {
         Map<String, Object> data = new LinkedHashMap<>();
         data.put("documentId", document.id());
@@ -56,40 +52,26 @@ final class DocumentLinkEvents {
         data.put("linkedId", link.linkedId());
         data.put("linkedReference", link.linkedReference());
 
-        EventSubject subject = EventSubject.of(
-                VERTICAL, "document-link", link.id(), link.linkedLabel());
-        OutboxHeaders headers = new OutboxHeaders(
-                Book.DIRECT,
-                VERTICAL,
-                null,
-                null,
-                null,
-                EventActor.system("eia-document-expert"),
-                subject,
-                List.of(),
-                EventMetadata.v1(SOURCE_BUILD));
-
         UUID eventId = EventIds.deterministic(
                 document.tenantId(), AGGREGATE_TYPE, link.id(), 1L, eventType);
-        return new OutboxEvent(
-                eventId,
-                0L,
-                document.tenantId(),
-                AGGREGATE_TYPE,
-                link.id(),
-                1L,
-                eventType,
-                1,
-                EventJson.toJson(data),
-                EventJson.toJson(headers),
-                link.id().toString(),
-                now,
-                now,
-                now,
-                OutboxEvent.Status.PENDING,
-                0,
-                null,
-                now,
-                null);
+        return EventEnvelope.builder()
+                .eventId(eventId)
+                .eventType(eventType)
+                .eventVersion(1)
+                .occurredAt(now)
+                .recordedAt(now)
+                .tenantId(document.tenantId())
+                .book(Book.DIRECT)
+                .vertical(VERTICAL)
+                .aggregateType(AGGREGATE_TYPE)
+                .aggregateId(link.id())
+                .aggregateVersion(1L)
+                .sequence(0)
+                .actor(EventActor.system("eia-document-expert"))
+                .subject(EventSubject.of(VERTICAL, "document-link", link.id(), link.linkedLabel()))
+                .links(List.of())
+                .data(data)
+                .metadata(EventMetadata.v1(SOURCE_BUILD))
+                .build();
     }
 }

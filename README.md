@@ -43,7 +43,7 @@ $env:JAVA_HOME='C:\Program Files\Eclipse Adoptium\jdk-22.0.2.9-hotspot'
   - `linkedType` is one of `DIRECT_CLAIM`, `ASSUMED_CLAIM`, `POLICY`, `CONTRACT`, `PARTY`, `PAYMENT`, `OTHER`. `linkedId` is required for every type; `linkedReference` is optional, at most 64 characters.
   - A duplicate `(tenant, document, linkedType, linkedId)` is `409 DUPLICATE_LINK`; no second row or event is written.
   - The link DTO is `{id, documentId, linkedType, linkedId, linkedReference, linkedLabel, createdAt}`; `linkedLabel` is the reference, or the first eight characters of `linkedId` when no reference was supplied.
-  - Link writes append `document.link-added` / `document.link-removed` outbox rows in the same transaction. These are the two-segment names required by the link contract; the shared `EventEnvelope` requires three segments, so the rows are assembled with the canonical headers/data directly.
+  - Link writes append canonical `document.link.added` / `document.link.removed` outbox rows in the same transaction. The rows round-trip through `EventEnvelope`, so the dispatcher can publish them.
 - The repository integration test runs against PostgreSQL when `EIA_TEST_DB=true` is set; otherwise it is skipped.
 
 ## Verification
