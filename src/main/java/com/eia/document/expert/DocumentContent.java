@@ -4,9 +4,10 @@ import java.time.Instant;
 import java.util.UUID;
 
 /**
- * Internal row read of {@code document_content}. {@link #version()} is the
- * content revision used as the aggregate version of
- * {@code document.content.uploaded}; it increments on every replacement.
+ * Internal row read of the {@code document_content} current pointer.
+ * {@link #currentVersion()} names the revision in
+ * {@code document_content_version} whose metadata is copied here for the
+ * current read and download routes.
  */
 record DocumentContent(
         UUID documentId,
@@ -17,10 +18,11 @@ record DocumentContent(
         String sha256,
         byte[] content,
         Instant uploadedAt,
-        long version
+        int currentVersion
 ) {
     DocumentContentMetadata metadata() {
         return new DocumentContentMetadata(
-                documentId, fileName, contentType, sizeBytes, sha256, uploadedAt);
+                documentId, fileName, contentType, sizeBytes, sha256, uploadedAt,
+                currentVersion);
     }
 }

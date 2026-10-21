@@ -16,11 +16,11 @@ import java.util.UUID;
 /**
  * Event factory for stored document content.
  *
- * <p>The event is written to the outbox in the same transaction as the content
- * row. {@code DocumentContent} is its own aggregate, keyed by the document id;
- * {@code content_version} is the aggregate version, so replacing content on the
- * same document produces a new event instead of colliding with the first
- * upload's outbox unique key.</p>
+ * <p>The event is written to the outbox in the same transaction as the
+ * revision row. {@code DocumentContent} is its own aggregate, keyed by the
+ * document id; the revision number is the aggregate version, so every upload
+ * produces a new event instead of colliding with the previous upload's outbox
+ * unique key. The payload repeats the revision as {@code version}.</p>
  */
 final class DocumentContentEvents {
     static final String UPLOADED = "document.content.uploaded";
@@ -32,10 +32,11 @@ final class DocumentContentEvents {
     private DocumentContentEvents() {
     }
 
-    static EventEnvelope uploaded(Document document, DocumentContent content, Instant now) {
+    static EventEnvelope uploaded(Document document, DocumentContentVersion content, Instant now) {
         Map<String, Object> data = new LinkedHashMap<>();
         data.put("documentId", document.id());
         data.put("documentNumber", document.documentNumber());
+        data.put("version", content.version());
         data.put("fileName", content.fileName());
         data.put("contentType", content.contentType());
         data.put("sizeBytes", content.sizeBytes());

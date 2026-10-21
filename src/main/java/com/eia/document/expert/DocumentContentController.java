@@ -7,20 +7,30 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
 import java.nio.charset.StandardCharsets;
+import java.util.List;
 import java.util.UUID;
 
 /**
  * Raw content API for a document.
  *
  * <ul>
- *   <li>{@code PUT /api/v1/documents/{documentId}/content} replaces the current
- *       content. The body is raw bytes, {@code Content-Type} is the file MIME
- *       type, and {@code X-File-Name} is the URL-encoded filename. An empty body
- *       is {@code 400 EMPTY_CONTENT}; over 10 MiB is {@code 413 FILE_TOO_LARGE}.</li>
- *   <li>{@code GET .../content} returns the bytes with the stored MIME type,
- *       an attachment disposition, and {@code X-Content-SHA256}.</li>
- *   <li>{@code GET .../content/metadata} returns the metadata without bytes;
- *       a document with no stored content is {@code 404 CONTENT_NOT_FOUND}.</li>
+ *   <li>{@code PUT /api/v1/documents/{documentId}/content} appends a revision
+ *       and makes it current. The body is raw bytes, {@code Content-Type} is
+ *       the file MIME type, and {@code X-File-Name} is the URL-encoded
+ *       filename. An empty body is {@code 400 EMPTY_CONTENT}; over 10 MiB is
+ *       {@code 413 FILE_TOO_LARGE}.</li>
+ *   <li>{@code GET .../content} returns the current bytes with the stored MIME
+ *       type, an attachment disposition, {@code X-Content-SHA256}, and
+ *       {@code X-Content-Version}.</li>
+ *   <li>{@code GET .../content/metadata} returns the current metadata without
+ *       bytes, including {@code currentVersion}; a document with no stored
+ *       content is {@code 404 CONTENT_NOT_FOUND}.</li>
+ *   <li>{@code GET .../content/versions} lists revision metadata newest first
+ *       as {@code {documentId, version, fileName, contentType, sizeBytes,
+ *       sha256, uploadedAt}}.</li>
+ *   <li>{@code GET .../content/versions/{version}} downloads one revision
+ *       with the same headers as the current download. An unknown revision is
+ *       {@code 404 CONTENT_VERSION_NOT_FOUND}.</li>
  * </ul>
  *
  * <p>The tenant comes from {@code X-EIA-Tenant}; the internal {@code tenantId}
@@ -33,6 +43,7 @@ public class DocumentContentController {
     private static final String TENANT_HEADER = "X-EIA-Tenant";
     private static final String FILE_NAME_HEADER = "X-File-Name";
     private static final String CONTENT_SHA256_HEADER = "X-Content-SHA256";
+    private static final String CONTENT_VERSION_HEADER = "X-Content-Version";
 
     private final DocumentContentService service;
 
@@ -60,12 +71,8 @@ public class DocumentContentController {
             @PathVariable UUID documentId) {
         UUID tenantId = TenantResolver.resolveForContent(headerTenant, queryTenant, documentId);
         DocumentContent content = service.getContent(tenantId, documentId);
-        return ResponseEntity.ok()
-                .contentType(mediaType(content.contentType()))
-                .contentLength(content.sizeBytes())
-                .header(HttpHeaders.CONTENT_DISPOSITION, attachment(content.fileName()))
-                .header(CONTENT_SHA256_HEADER, content.sha256())
-                .body(content.content());
+        return contentResponse(content.contentType(), content.fileName(), content.sizeBytes(),
+                content.sha256(), content.currentVersion(), content.content());
     }
 
     @GetMapping("/{documentId}/content/metadata")
@@ -75,6 +82,39 @@ public class DocumentContentController {
             @PathVariable UUID documentId) {
         UUID tenantId = TenantResolver.resolveForContent(headerTenant, queryTenant, documentId);
         return service.getMetadata(tenantId, documentId);
+    }
+
+    @GetMapping("/{documentId}/content/versions")
+    public List<DocumentContentVersionMetadata> versions(
+            @RequestHeader(name = TENANT_HEADER, required = false) UUID headerTenant,
+            @RequestParam(name = "tenantId", required = false) UUID queryTenant,
+            @PathVariable UUID documentId) {
+        UUID tenantId = TenantResolver.resolveForContent(headerTenant, queryTenant, documentId);
+        return service.listVersions(tenantId, documentId);
+    }
+
+    @GetMapping("/{documentId}/content/versions/{version}")
+    public ResponseEntity<byte[]> downloadVersion(
+            @RequestHeader(name = TENANT_HEADER, required = false) UUID headerTenant,
+            @RequestParam(name = "tenantId", required = false) UUID queryTenant,
+            @PathVariable UUID documentId,
+            @PathVariable int version) {
+        UUID tenantId = TenantResolver.resolveForContent(headerTenant, queryTenant, documentId);
+        DocumentContentVersion content = service.getVersionContent(tenantId, documentId, version);
+        return contentResponse(content.contentType(), content.fileName(), content.sizeBytes(),
+                content.sha256(), content.version(), content.content());
+    }
+
+    private static ResponseEntity<byte[]> contentResponse(String contentType, String fileName,
+                                                          long sizeBytes, String sha256,
+                                                          int version, byte[] content) {
+        return ResponseEntity.ok()
+                .contentType(mediaType(contentType))
+                .contentLength(sizeBytes)
+                .header(HttpHeaders.CONTENT_DISPOSITION, attachment(fileName))
+                .header(CONTENT_SHA256_HEADER, sha256)
+                .header(CONTENT_VERSION_HEADER, Integer.toString(version))
+                .body(content);
     }
 
     /**

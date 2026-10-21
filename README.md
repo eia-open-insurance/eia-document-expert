@@ -30,7 +30,7 @@ $env:JAVA_HOME='C:\Program Files\Eclipse Adoptium\jdk-22.0.2.9-hotspot'
 ```
 
 - Port: `8095`.
-- Database: `eia_document` on `localhost:5432` (user `postgres`, password `postgres`). `schema.sql` creates the `document`, `document_link`, `document_content`, and outbox tables on start; the DDL is idempotent.
+- Database: `eia_document` on `localhost:5432` (user `postgres`, password `postgres`). `schema.sql` creates the `document`, `document_link`, `document_content`, `document_content_version`, and outbox tables on start; the DDL is idempotent.
 - Internal API: `GET|POST /internal/v1/documents`, `GET /internal/v1/documents/{id}`, `POST /internal/v1/documents/{id}/status`, `GET /internal/v1/documents/search`.
 - Public read/link API:
   - `GET /api/v1/documents?linkedType=&linkedId=&q=` — list; the link pair filters documents associated with that subject, and `q` matches document metadata or any link's `linkedReference`.
@@ -44,12 +44,15 @@ $env:JAVA_HOME='C:\Program Files\Eclipse Adoptium\jdk-22.0.2.9-hotspot'
   - A duplicate `(tenant, document, linkedType, linkedId)` is `409 DUPLICATE_LINK`; no second row or event is written.
   - The link DTO is `{id, documentId, linkedType, linkedId, linkedReference, linkedLabel, createdAt}`; `linkedLabel` is the reference, or the first eight characters of `linkedId` when no reference was supplied.
   - Link writes append canonical `document.link.added` / `document.link.removed` outbox rows in the same transaction. The rows round-trip through `EventEnvelope`, so the dispatcher can publish them.
-- Document content API (one current content row per document):
-  - `PUT /api/v1/documents/{documentId}/content` — replace the stored bytes. The body is raw bytes, `Content-Type` is the file MIME type, and `X-File-Name` is the URL-encoded filename. The maximum is 10 MiB; an empty body is `400 EMPTY_CONTENT` and an over-limit body is `413 FILE_TOO_LARGE`. Returns `200` with `{documentId, fileName, contentType, sizeBytes, sha256, uploadedAt}`.
-  - `GET /api/v1/documents/{documentId}/content` — download the bytes with the stored `Content-Type`, an attachment `Content-Disposition`, and `X-Content-SHA256`.
-  - `GET /api/v1/documents/{documentId}/content/metadata` — metadata without bytes; a document with no content is `404 CONTENT_NOT_FOUND`.
+- Document content API (append-only revisions; `document_content` is the current pointer):
+  - `PUT /api/v1/documents/{documentId}/content` — append a revision and make it current. The body is raw bytes, `Content-Type` is the file MIME type, and `X-File-Name` is the URL-encoded filename. The maximum is 10 MiB; an empty body is `400 EMPTY_CONTENT` and an over-limit body is `413 FILE_TOO_LARGE`. Returns `200` with `{documentId, fileName, contentType, sizeBytes, sha256, uploadedAt, currentVersion}`.
+  - `GET /api/v1/documents/{documentId}/content` — download the current bytes with the stored `Content-Type`, an attachment `Content-Disposition`, `X-Content-SHA256`, and `X-Content-Version`.
+  - `GET /api/v1/documents/{documentId}/content/metadata` — current metadata without bytes, including `currentVersion`; a document with no content is `404 CONTENT_NOT_FOUND`.
+  - `GET /api/v1/documents/{documentId}/content/versions` — list revision metadata newest first as `{documentId, version, fileName, contentType, sizeBytes, sha256, uploadedAt}`; a document with no content returns an empty list.
+  - `GET /api/v1/documents/{documentId}/content/versions/{version}` — download one revision with the same headers as the current download; an unknown revision is `404 CONTENT_VERSION_NOT_FOUND`.
   - Content also resolves the tenant from `X-EIA-Tenant` (with the internal `tenantId` query fallback). A missing document or tenant is `404 NOT_FOUND`, so the tenant wall never reveals another tenant's document.
-  - `sha256` is the lowercase SHA-256 of the exact stored bytes. Uploads append a canonical `document.content.uploaded` outbox row in the same transaction with the document number, filename, MIME type, size, and digest.
+  - `sha256` is the lowercase SHA-256 of the exact stored bytes. Uploads append an immutable `document_content_version` row and a canonical `document.content.uploaded` outbox row in the same transaction with the document number, `version`, filename, MIME type, size, and digest.
+  - Existing content from before versioning is backfilled as version 1 when the schema runs.
 - The repository integration test runs against PostgreSQL when `EIA_TEST_DB=true` is set; otherwise it is skipped.
 
 ## Verification

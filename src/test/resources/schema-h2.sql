@@ -36,8 +36,8 @@ CREATE TABLE IF NOT EXISTS document_link (
 CREATE INDEX IF NOT EXISTS idx_document_link_subject
     ON document_link (tenant_id, linked_type, linked_id);
 
--- H2-compatible copy of the document_content table. H2 accepts BYTEA in
--- PostgreSQL mode; timestamps use the TIMESTAMP WITH TIME ZONE spelling.
+-- H2-compatible copy of the document_content current pointer. H2 accepts BYTEA
+-- in PostgreSQL mode; timestamps use the TIMESTAMP WITH TIME ZONE spelling.
 CREATE TABLE IF NOT EXISTS document_content (
     document_id UUID PRIMARY KEY,
     tenant_id UUID NOT NULL,
@@ -46,11 +46,52 @@ CREATE TABLE IF NOT EXISTS document_content (
     size_bytes BIGINT NOT NULL,
     sha256 CHAR(64) NOT NULL,
     content BYTEA NOT NULL,
-    content_version BIGINT NOT NULL DEFAULT 1,
+    current_version INTEGER NOT NULL DEFAULT 1,
     uploaded_at TIMESTAMP WITH TIME ZONE NOT NULL,
     CONSTRAINT fk_document_content_document
         FOREIGN KEY (document_id) REFERENCES document (id) ON DELETE CASCADE
 );
+
+-- Mirrors the production migration for databases created before versioning.
+ALTER TABLE document_content
+    ADD COLUMN IF NOT EXISTS current_version INTEGER NOT NULL DEFAULT 1;
+
+-- H2-compatible copy of the immutable content revision table.
+CREATE TABLE IF NOT EXISTS document_content_version (
+    id UUID PRIMARY KEY,
+    document_id UUID NOT NULL,
+    tenant_id UUID NOT NULL,
+    version INTEGER NOT NULL,
+    file_name VARCHAR(255) NOT NULL,
+    content_type VARCHAR(128) NOT NULL,
+    size_bytes BIGINT NOT NULL,
+    sha256 CHAR(64) NOT NULL,
+    content BYTEA NOT NULL,
+    uploaded_at TIMESTAMP WITH TIME ZONE NOT NULL,
+    CONSTRAINT fk_document_content_version_document
+        FOREIGN KEY (document_id) REFERENCES document (id) ON DELETE CASCADE,
+    CONSTRAINT uq_document_content_version
+        UNIQUE (document_id, version)
+);
+
+CREATE INDEX IF NOT EXISTS idx_document_content_version_document
+    ON document_content_version (document_id, version DESC);
+
+-- Backfill content written before revisions existed as version 1.
+INSERT INTO document_content_version (
+    id, document_id, tenant_id, version, file_name, content_type, size_bytes,
+    sha256, content, uploaded_at
+)
+SELECT RANDOM_UUID(), c.document_id, c.tenant_id, 1, c.file_name,
+       c.content_type, c.size_bytes, c.sha256, c.content, c.uploaded_at
+  FROM document_content c
+ WHERE NOT EXISTS (
+       SELECT 1
+         FROM document_content_version v
+        WHERE v.document_id = c.document_id
+          AND v.version = 1
+ )
+ON CONFLICT DO NOTHING;
 
 -- H2-compatible copy of the PostgreSQL outbox table. JSON payloads are TEXT
 -- here; production DDL uses jsonb.
