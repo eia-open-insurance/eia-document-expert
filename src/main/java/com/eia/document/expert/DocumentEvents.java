@@ -29,6 +29,15 @@ final class DocumentEvents {
     static final String CREATED = "document.document.created";
     static final String UPDATED = "document.document.updated";
     static final String STATUS_CHANGED = "document.document.status-changed";
+    static final String LEGAL_HOLD_PLACED = "document.legal-hold.placed";
+    static final String LEGAL_HOLD_RELEASED = "document.legal-hold.released";
+    /**
+     * Canonical catalog name. The platform envelope requires the
+     * {@code {vertical}.{aggregate}.{verb}} shape
+     * ({@code document.document.disposed}), so the shorter fact name
+     * {@code document.disposed} is not a valid wire event type.
+     */
+    static final String DISPOSED = "document.document.disposed";
 
     private static final Book EVENT_BOOK = Book.DIRECT;
     private static final String VERTICAL = "document";
@@ -74,6 +83,37 @@ final class DocumentEvents {
         data.put("to", after.status());
 
         return envelope(after, STATUS_CHANGED, after.version() + 1L, now, data);
+    }
+
+    /**
+     * Legal-hold fact for a document that just entered {@code ON_HOLD}. The
+     * payload is the shared lifecycle shape: document identity, hold reason, and
+     * the resulting status.
+     */
+    static EventEnvelope legalHoldPlaced(Document document, String reason, Instant now) {
+        return lifecycleEvent(document, LEGAL_HOLD_PLACED, reason, now);
+    }
+
+    /**
+     * Release fact. The reason is the hold reason being lifted; the status is
+     * the restored pre-hold status.
+     */
+    static EventEnvelope legalHoldReleased(Document document, String reason, Instant now) {
+        return lifecycleEvent(document, LEGAL_HOLD_RELEASED, reason, now);
+    }
+
+    /** Disposition tombstone fact for a document moving to {@code DISPOSED}. */
+    static EventEnvelope disposed(Document document, String reason, Instant now) {
+        return lifecycleEvent(document, DISPOSED, reason, now);
+    }
+
+    private static EventEnvelope lifecycleEvent(
+            Document document, String eventType, String reason, Instant now) {
+        Map<String, Object> data = identity(document);
+        data.put("reason", reason);
+        data.put("status", document.status());
+
+        return envelope(document, eventType, document.version() + 1L, now, data);
     }
 
     private static Map<String, Object> identity(Document document) {

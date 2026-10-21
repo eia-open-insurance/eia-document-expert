@@ -9,11 +9,22 @@ CREATE TABLE IF NOT EXISTS document (
     classification VARCHAR(32) NOT NULL,
     status VARCHAR(32) NOT NULL,
     retention_until DATE,
+    hold_reason TEXT,
+    held_at TIMESTAMP WITH TIME ZONE,
+    status_before_hold VARCHAR(16),
+    disposed_at TIMESTAMP WITH TIME ZONE,
     version INTEGER NOT NULL DEFAULT 0,
     created_at TIMESTAMP WITH TIME ZONE NOT NULL,
     updated_at TIMESTAMP WITH TIME ZONE NOT NULL,
     CONSTRAINT uq_document_number UNIQUE (tenant_id, document_number)
 );
+
+-- H2-compatible copy of the legal-hold and disposition columns. The ALTERs
+-- mirror the production idempotent migration.
+ALTER TABLE document ADD COLUMN IF NOT EXISTS hold_reason TEXT;
+ALTER TABLE document ADD COLUMN IF NOT EXISTS held_at TIMESTAMP WITH TIME ZONE;
+ALTER TABLE document ADD COLUMN IF NOT EXISTS status_before_hold VARCHAR(16);
+ALTER TABLE document ADD COLUMN IF NOT EXISTS disposed_at TIMESTAMP WITH TIME ZONE;
 
 -- H2-compatible copy of the document_link table.
 CREATE TABLE IF NOT EXISTS document_link (

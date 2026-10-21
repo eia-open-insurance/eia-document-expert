@@ -9,11 +9,24 @@ CREATE TABLE IF NOT EXISTS document (
     classification VARCHAR(32) NOT NULL,
     status VARCHAR(32) NOT NULL,
     retention_until DATE,
+    hold_reason TEXT,
+    held_at TIMESTAMPTZ,
+    status_before_hold VARCHAR(16),
+    disposed_at TIMESTAMPTZ,
     version INTEGER NOT NULL DEFAULT 0,
     created_at TIMESTAMPTZ NOT NULL,
     updated_at TIMESTAMPTZ NOT NULL,
     CONSTRAINT uq_document_number UNIQUE (tenant_id, document_number)
 );
+
+-- Legal hold and disposition fields. A hold snapshots the status it suspended
+-- so a release can restore it; disposed_at is the tombstone timestamp. The
+-- ALTERs are idempotent so databases created before these columns existed pick
+-- them up on the next start.
+ALTER TABLE document ADD COLUMN IF NOT EXISTS hold_reason TEXT;
+ALTER TABLE document ADD COLUMN IF NOT EXISTS held_at TIMESTAMPTZ;
+ALTER TABLE document ADD COLUMN IF NOT EXISTS status_before_hold VARCHAR(16);
+ALTER TABLE document ADD COLUMN IF NOT EXISTS disposed_at TIMESTAMPTZ;
 
 CREATE INDEX IF NOT EXISTS idx_document_tenant_created
     ON document (tenant_id, created_at DESC);

@@ -7,6 +7,8 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.time.Instant;
+import java.time.LocalDate;
+import java.time.ZoneOffset;
 import java.util.Comparator;
 import java.util.List;
 import java.util.UUID;
@@ -24,6 +26,7 @@ public class DocumentService {
     private static final String SEARCH_TYPE = "DOCUMENT";
     private static final int MAX_SEARCH_LIMIT = 25;
     private static final String FIELD_SEPARATOR = " · ";
+    private static final String DEFAULT_DISPOSITION_REASON = "RETENTION_EXPIRED";
 
     private final DocumentRepository repository;
     private final DocumentLinkRepository linkRepository;
@@ -154,6 +157,57 @@ public class DocumentService {
         return after;
     }
 
+    /**
+     * Places a legal hold and records the previous status so a later release can
+     * restore it. The document row and the {@code document.legal-hold.placed}
+     * outbox fact commit in one transaction.
+     */
+    @Transactional
+    public Document placeHold(UUID tenantId, UUID id, String reason) {
+        Document current = get(tenantId, id);
+        String holdReason = normalizeReason(reason);
+        DocumentRules.validateHold(current, holdReason);
+        Instant now = Instant.now();
+        Document after = repository.placeHold(current, holdReason, now);
+        outbox.insert(OutboxEvent.fromEnvelope(
+                DocumentEvents.legalHoldPlaced(after, holdReason, now)));
+        return after;
+    }
+
+    /**
+     * Releases a legal hold, restoring the snapshotted status (falling back to
+     * ARCHIVED when the snapshot is absent) and clearing the hold columns, all in
+     * one transaction with the release fact.
+     */
+    @Transactional
+    public Document releaseHold(UUID tenantId, UUID id) {
+        Document current = get(tenantId, id);
+        DocumentRules.validateRelease(current);
+        Instant now = Instant.now();
+        Document after = repository.releaseHold(current, DocumentRules.restoredStatus(current), now);
+        outbox.insert(OutboxEvent.fromEnvelope(
+                DocumentEvents.legalHoldReleased(after, current.holdReason(), now)));
+        return after;
+    }
+
+    /**
+     * Tombstones a document once its retention date has expired and no legal
+     * hold applies. The disposition reason travels in the
+     * {@code document.document.disposed} fact; the approval and certificate
+     * steps from SPEC 11.6.8 are out of this slice.
+     */
+    @Transactional
+    public Document dispose(UUID tenantId, UUID id, String reason) {
+        Document current = get(tenantId, id);
+        DocumentRules.validateDispose(current, LocalDate.now(ZoneOffset.UTC));
+        String dispositionReason = normalizeDispositionReason(reason);
+        Instant now = Instant.now();
+        Document after = repository.dispose(current, now);
+        outbox.insert(OutboxEvent.fromEnvelope(
+                DocumentEvents.disposed(after, dispositionReason, now)));
+        return after;
+    }
+
     private static DocumentSearchItem toSearchItem(Document document) {
         String primary = isBlank(document.title()) ? document.documentType() : document.title();
         return new DocumentSearchItem(
@@ -180,6 +234,17 @@ public class DocumentService {
             return null;
         }
         return reference.trim();
+    }
+
+    private static String normalizeReason(String reason) {
+        return reason == null ? null : reason.trim();
+    }
+
+    private static String normalizeDispositionReason(String reason) {
+        if (reason == null || reason.isBlank()) {
+            return DEFAULT_DISPOSITION_REASON;
+        }
+        return reason.trim();
     }
 
     private static String normalizeQuery(String q) {

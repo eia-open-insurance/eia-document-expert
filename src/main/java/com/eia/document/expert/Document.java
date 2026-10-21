@@ -21,6 +21,10 @@ public record Document(
         String classification,
         String status,
         LocalDate retentionUntil,
+        String holdReason,
+        Instant heldAt,
+        String statusBeforeHold,
+        Instant disposedAt,
         int version,
         Instant createdAt,
         Instant updatedAt

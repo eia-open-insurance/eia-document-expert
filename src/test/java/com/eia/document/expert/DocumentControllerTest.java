@@ -214,6 +214,7 @@ class DocumentControllerTest {
     private static Document document(String status, LocalDate retentionUntil, int version) {
         Instant timestamp = Instant.parse("2026-10-19T12:00:00Z");
         return new Document(DOCUMENT_ID, TENANT, "DOC-2026-0000001", "Policy schedule",
-                "POLICY", "CONFIDENTIAL", status, retentionUntil, version, timestamp, timestamp);
+                "POLICY", "CONFIDENTIAL", status, retentionUntil, null, null, null, null,
+                version, timestamp, timestamp);
     }
 }

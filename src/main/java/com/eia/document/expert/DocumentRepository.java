@@ -25,7 +25,8 @@ import java.util.UUID;
 public class DocumentRepository {
     private static final String COLUMNS = """
             id, tenant_id, document_number, title, document_type, classification,
-            status, retention_until, version, created_at, updated_at
+            status, retention_until, hold_reason, held_at, status_before_hold,
+            disposed_at, version, created_at, updated_at
             """;
 
     private static final RowMapper<Document> MAPPER = DocumentRepository::map;
@@ -138,6 +139,67 @@ public class DocumentRepository {
                 .orElseThrow(() -> new DocumentNotFoundException(current.id()));
     }
 
+    /**
+     * Moves the document to {@code ON_HOLD} while snapshotting the status it is
+     * leaving and the hold reason. The prior status is later restored by
+     * {@link #releaseHold(Document, Instant)}.
+     */
+    public Document placeHold(Document current, String reason, Instant now) {
+        int updated = jdbc.update("""
+                UPDATE document
+                   SET status = ?, hold_reason = ?, held_at = ?, status_before_hold = ?,
+                       version = version + 1, updated_at = ?
+                 WHERE tenant_id = ? AND id = ? AND version = ?
+                """, DocumentStatus.ON_HOLD.name(), reason, now.atOffset(ZoneOffset.UTC),
+                current.status(), now.atOffset(ZoneOffset.UTC),
+                current.tenantId(), current.id(), current.version());
+        if (updated == 0) {
+            throw new VersionConflictException("document " + current.id()
+                    + " was changed concurrently; reload and retry");
+        }
+        return findById(current.tenantId(), current.id())
+                .orElseThrow(() -> new DocumentNotFoundException(current.id()));
+    }
+
+    /**
+     * Clears the legal-hold columns and restores the caller-supplied status.
+     * The restored status is computed by the rules from {@code status_before_hold}.
+     */
+    public Document releaseHold(Document current, DocumentStatus restoredStatus, Instant now) {
+        int updated = jdbc.update("""
+                UPDATE document
+                   SET status = ?, hold_reason = NULL, held_at = NULL,
+                       status_before_hold = NULL, version = version + 1, updated_at = ?
+                 WHERE tenant_id = ? AND id = ? AND version = ?
+                """, restoredStatus.name(), now.atOffset(ZoneOffset.UTC),
+                current.tenantId(), current.id(), current.version());
+        if (updated == 0) {
+            throw new VersionConflictException("document " + current.id()
+                    + " was changed concurrently; reload and retry");
+        }
+        return findById(current.tenantId(), current.id())
+                .orElseThrow(() -> new DocumentNotFoundException(current.id()));
+    }
+
+    /**
+     * Tombstones the document as {@code DISPOSED}. The row and its metadata stay
+     * readable; only the lifecycle fields change.
+     */
+    public Document dispose(Document current, Instant now) {
+        int updated = jdbc.update("""
+                UPDATE document
+                   SET status = ?, disposed_at = ?, version = version + 1, updated_at = ?
+                 WHERE tenant_id = ? AND id = ? AND version = ?
+                """, DocumentStatus.DISPOSED.name(), now.atOffset(ZoneOffset.UTC),
+                now.atOffset(ZoneOffset.UTC), current.tenantId(), current.id(), current.version());
+        if (updated == 0) {
+            throw new VersionConflictException("document " + current.id()
+                    + " was changed concurrently; reload and retry");
+        }
+        return findById(current.tenantId(), current.id())
+                .orElseThrow(() -> new DocumentNotFoundException(current.id()));
+    }
+
     private String nextDocumentNumber(Instant now) {
         Long sequence = jdbc.queryForObject("SELECT nextval('document_number_seq')", Long.class);
         long value = sequence == null ? 0L : sequence;
@@ -163,9 +225,17 @@ public class DocumentRepository {
                 rs.getString("classification"),
                 rs.getString("status"),
                 rs.getObject("retention_until", LocalDate.class),
+                rs.getString("hold_reason"),
+                instant(rs.getObject("held_at", OffsetDateTime.class)),
+                rs.getString("status_before_hold"),
+                instant(rs.getObject("disposed_at", OffsetDateTime.class)),
                 rs.getInt("version"),
                 rs.getObject("created_at", OffsetDateTime.class).toInstant(),
                 rs.getObject("updated_at", OffsetDateTime.class).toInstant()
         );
+    }
+
+    private static Instant instant(OffsetDateTime timestamp) {
+        return timestamp == null ? null : timestamp.toInstant();
     }
 }

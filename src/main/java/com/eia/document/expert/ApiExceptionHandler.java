@@ -15,8 +15,9 @@ import java.util.List;
 /**
  * Maps document failures onto structured HTTP responses: 400 for invalid input
  * and rule violations, 404 for an unknown document, link, content, or content
- * version, 409 for a version conflict or a duplicate link, and 413 for
- * over-limit content.
+ * version, 409 for a version conflict, a duplicate link, or a lifecycle state
+ * conflict (including an already-held document), and 413 for over-limit
+ * content.
  */
 @RestControllerAdvice
 public class ApiExceptionHandler {
@@ -54,6 +55,12 @@ public class ApiExceptionHandler {
     @ResponseStatus(HttpStatus.CONFLICT)
     public ApiError versionConflict(VersionConflictException ex) {
         return new ApiError("VERSION_CONFLICT", ex.getMessage());
+    }
+
+    @ExceptionHandler(DocumentConflictException.class)
+    @ResponseStatus(HttpStatus.CONFLICT)
+    public ApiError documentConflict(DocumentConflictException ex) {
+        return new ApiError(ex.code(), ex.getMessage());
     }
 
     @ExceptionHandler(DuplicateLinkException.class)

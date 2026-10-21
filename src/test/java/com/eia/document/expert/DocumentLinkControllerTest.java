@@ -284,6 +284,7 @@ class DocumentLinkControllerTest {
 
     private static Document document() {
         return new Document(DOCUMENT_ID, TENANT, "DOC-2026-0000001", "Policy schedule",
-                "POLICY", "CONFIDENTIAL", "RECEIVED", RETENTION, 0, NOW, NOW);
+                "POLICY", "CONFIDENTIAL", "RECEIVED", RETENTION, null, null, null, null,
+                0, NOW, NOW);
     }
 }

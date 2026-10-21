@@ -13,6 +13,7 @@ import static org.assertj.core.api.Assertions.catchThrowableOfType;
 class DocumentRulesTest {
     private static final UUID TENANT = UUID.fromString("11111111-1111-7111-8111-111111111111");
     private static final Instant NOW = Instant.parse("2026-10-19T12:00:00Z");
+    private static final LocalDate RETENTION = LocalDate.of(2036, 10, 19);
 
     @Test
     void definesTheSpecificationEnumerations() {
@@ -110,12 +111,111 @@ class DocumentRulesTest {
         assertThat(ex.getMessage()).contains("expected version 2").contains("version 3");
     }
 
+    @Test
+    void placesHoldFromEveryEligibleStatus() {
+        for (String status : new String[]{"ACTIVE", "ARCHIVED", "CLASSIFIED", "SUPERSEDED"}) {
+            DocumentRules.validateHold(document(status, RETENTION, 1), "Litigation hold");
+        }
+    }
+
+    @Test
+    void rejectsHoldOnHeldOrIneligibleDocument() {
+        DocumentConflictException alreadyHeld = catchThrowableOfType(
+                () -> DocumentRules.validateHold(document("ON_HOLD", RETENTION, 1), "Litigation hold"),
+                DocumentConflictException.class);
+        assertThat(alreadyHeld.code()).isEqualTo(DocumentRules.DOCUMENT_ALREADY_ON_HOLD);
+
+        DocumentConflictException notEligible = catchThrowableOfType(
+                () -> DocumentRules.validateHold(document("RECEIVED", RETENTION, 1), "Litigation hold"),
+                DocumentConflictException.class);
+        assertThat(notEligible.code()).isEqualTo(DocumentRules.HOLD_STATUS_NOT_ALLOWED);
+    }
+
+    @Test
+    void validatesTheHoldReason() {
+        DocumentRules.validateHoldReason("x".repeat(DocumentRules.MAX_HOLD_REASON_LENGTH));
+
+        DocumentRuleException blank = catchThrowableOfType(
+                () -> DocumentRules.validateHoldReason("  "), DocumentRuleException.class);
+        assertThat(blank.code()).isEqualTo(DocumentRules.INVALID_HOLD_REASON);
+
+        DocumentRuleException tooLong = catchThrowableOfType(
+                () -> DocumentRules.validateHoldReason("x".repeat(DocumentRules.MAX_HOLD_REASON_LENGTH + 1)),
+                DocumentRuleException.class);
+        assertThat(tooLong.code()).isEqualTo(DocumentRules.INVALID_HOLD_REASON);
+    }
+
+    @Test
+    void restoresTheSnapshottedStatusOrFallsBackToArchived() {
+        assertThat(DocumentRules.restoredStatus(heldDocument("CLASSIFIED")))
+                .isEqualTo(DocumentStatus.CLASSIFIED);
+        assertThat(DocumentRules.restoredStatus(heldDocument("SUPERSEDED")))
+                .isEqualTo(DocumentStatus.SUPERSEDED);
+        assertThat(DocumentRules.restoredStatus(heldDocument(null)))
+                .isEqualTo(DocumentStatus.ARCHIVED);
+        assertThat(DocumentRules.restoredStatus(heldDocument("NOT_A_STATUS")))
+                .isEqualTo(DocumentStatus.ARCHIVED);
+    }
+
+    @Test
+    void rejectsReleaseWhenTheDocumentIsNotHeld() {
+        DocumentConflictException ex = catchThrowableOfType(
+                () -> DocumentRules.validateRelease(document("ACTIVE", RETENTION, 1)),
+                DocumentConflictException.class);
+
+        assertThat(ex.code()).isEqualTo(DocumentRules.DOCUMENT_NOT_ON_HOLD);
+    }
+
+    @Test
+    void rejectsDispositionBeforeRetentionExpires() {
+        DocumentConflictException ex = catchThrowableOfType(
+                () -> DocumentRules.validateDispose(document("ACTIVE", LocalDate.of(2036, 10, 19), 1),
+                        LocalDate.of(2026, 10, 19)),
+                DocumentConflictException.class);
+
+        assertThat(ex.code()).isEqualTo(DocumentRules.RETENTION_NOT_EXPIRED);
+    }
+
+    @Test
+    void rejectsDispositionUnderLegalHold() {
+        DocumentConflictException ex = catchThrowableOfType(
+                () -> DocumentRules.validateDispose(heldDocument("ACTIVE"),
+                        LocalDate.of(2026, 10, 19)),
+                DocumentConflictException.class);
+
+        assertThat(ex.code()).isEqualTo(DocumentRules.DOCUMENT_ON_LEGAL_HOLD);
+    }
+
+    @Test
+    void disposesOnlyEligibleStatusesWithAnExpiredRetentionDate() {
+        LocalDate today = LocalDate.of(2026, 10, 19);
+        DocumentRules.validateDispose(document("ACTIVE", today, 1), today);
+        DocumentRules.validateDispose(document("ARCHIVED", today.minusYears(1), 1), today);
+        DocumentRules.validateDispose(document("SUPERSEDED", today.minusYears(1), 1), today);
+
+        DocumentConflictException classified = catchThrowableOfType(
+                () -> DocumentRules.validateDispose(document("CLASSIFIED", today, 1), today),
+                DocumentConflictException.class);
+        assertThat(classified.code()).isEqualTo(DocumentRules.DISPOSAL_STATUS_NOT_ALLOWED);
+
+        DocumentConflictException noRetention = catchThrowableOfType(
+                () -> DocumentRules.validateDispose(document("ACTIVE", null, 1), today),
+                DocumentConflictException.class);
+        assertThat(noRetention.code()).isEqualTo(DocumentRules.RETENTION_DATE_REQUIRED);
+    }
+
     private static CreateDocumentRequest request(String type, String classification, LocalDate retentionUntil) {
         return new CreateDocumentRequest(TENANT, "Title", type, classification, retentionUntil);
     }
 
     private static Document document(String status, LocalDate retentionUntil, int version) {
         return new Document(UUID.randomUUID(), TENANT, "DOC-2026-0000001", "Title", "POLICY",
-                "CONFIDENTIAL", status, retentionUntil, version, NOW, NOW);
+                "CONFIDENTIAL", status, retentionUntil, null, null, null, null, version, NOW, NOW);
+    }
+
+    private static Document heldDocument(String statusBeforeHold) {
+        return new Document(UUID.randomUUID(), TENANT, "DOC-2026-0000001", "Title", "POLICY",
+                "CONFIDENTIAL", "ON_HOLD", RETENTION, "Litigation hold", NOW,
+                statusBeforeHold, null, 3, NOW, NOW);
     }
 }
