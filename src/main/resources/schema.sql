@@ -44,6 +44,24 @@ CREATE TABLE IF NOT EXISTS document_link (
 CREATE INDEX IF NOT EXISTS idx_document_link_subject
     ON document_link (tenant_id, linked_type, linked_id);
 
+-- Current file bytes for a document. At most one content row exists per
+-- document; an upload replaces it in place and content_version increments so
+-- every document.content.uploaded outbox fact has a distinct aggregate
+-- version. The foreign key cascades so disposing the document removes bytes.
+CREATE TABLE IF NOT EXISTS document_content (
+    document_id UUID PRIMARY KEY,
+    tenant_id UUID NOT NULL,
+    file_name VARCHAR(255) NOT NULL,
+    content_type VARCHAR(128) NOT NULL,
+    size_bytes BIGINT NOT NULL,
+    sha256 CHAR(64) NOT NULL,
+    content BYTEA NOT NULL,
+    content_version BIGINT NOT NULL DEFAULT 1,
+    uploaded_at TIMESTAMPTZ NOT NULL,
+    CONSTRAINT fk_document_content_document
+        FOREIGN KEY (document_id) REFERENCES document (id) ON DELETE CASCADE
+);
+
 -- Transactional outbox (SPEC 7.5.1). The canonical copy lives in
 -- eia-platform/libs/src/main/resources/db/outbox_event.sql; keep both in sync.
 CREATE TABLE IF NOT EXISTS outbox_event (

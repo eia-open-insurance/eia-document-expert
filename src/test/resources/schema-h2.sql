@@ -36,6 +36,22 @@ CREATE TABLE IF NOT EXISTS document_link (
 CREATE INDEX IF NOT EXISTS idx_document_link_subject
     ON document_link (tenant_id, linked_type, linked_id);
 
+-- H2-compatible copy of the document_content table. H2 accepts BYTEA in
+-- PostgreSQL mode; timestamps use the TIMESTAMP WITH TIME ZONE spelling.
+CREATE TABLE IF NOT EXISTS document_content (
+    document_id UUID PRIMARY KEY,
+    tenant_id UUID NOT NULL,
+    file_name VARCHAR(255) NOT NULL,
+    content_type VARCHAR(128) NOT NULL,
+    size_bytes BIGINT NOT NULL,
+    sha256 CHAR(64) NOT NULL,
+    content BYTEA NOT NULL,
+    content_version BIGINT NOT NULL DEFAULT 1,
+    uploaded_at TIMESTAMP WITH TIME ZONE NOT NULL,
+    CONSTRAINT fk_document_content_document
+        FOREIGN KEY (document_id) REFERENCES document (id) ON DELETE CASCADE
+);
+
 -- H2-compatible copy of the PostgreSQL outbox table. JSON payloads are TEXT
 -- here; production DDL uses jsonb.
 CREATE TABLE IF NOT EXISTS outbox_event (

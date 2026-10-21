@@ -14,8 +14,8 @@ import java.util.List;
 
 /**
  * Maps document failures onto structured HTTP responses: 400 for invalid input
- * and rule violations, 404 for an unknown document or link, 409 for a version
- * conflict or a duplicate link.
+ * and rule violations, 404 for an unknown document, link, or content, 409 for a
+ * version conflict or a duplicate link, and 413 for over-limit content.
  */
 @RestControllerAdvice
 public class ApiExceptionHandler {
@@ -23,6 +23,18 @@ public class ApiExceptionHandler {
     @ResponseStatus(HttpStatus.NOT_FOUND)
     public ApiError notFound(DocumentNotFoundException ex) {
         return new ApiError("NOT_FOUND", ex.getMessage());
+    }
+
+    @ExceptionHandler(ContentNotFoundException.class)
+    @ResponseStatus(HttpStatus.NOT_FOUND)
+    public ApiError contentNotFound(ContentNotFoundException ex) {
+        return new ApiError("CONTENT_NOT_FOUND", ex.getMessage());
+    }
+
+    @ExceptionHandler(FileTooLargeException.class)
+    @ResponseStatus(HttpStatus.PAYLOAD_TOO_LARGE)
+    public ApiError fileTooLarge(FileTooLargeException ex) {
+        return new ApiError(DocumentContentRules.FILE_TOO_LARGE, ex.getMessage());
     }
 
     @ExceptionHandler(DocumentRuleException.class)

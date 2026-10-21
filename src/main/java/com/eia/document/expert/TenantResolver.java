@@ -24,4 +24,19 @@ final class TenantResolver {
         throw new DocumentRuleException("TENANT_REQUIRED",
                 "X-EIA-Tenant header or tenantId query parameter is required");
     }
+
+    /**
+     * Content routes treat an absent tenant as an invisible document: the
+     * response is {@code 404 NOT_FOUND}, not a 400 that confirms the route was
+     * reached. A supplied tenant still gates document lookup normally.
+     */
+    static UUID resolveForContent(UUID headerTenant, UUID queryTenant, UUID documentId) {
+        if (headerTenant != null) {
+            return headerTenant;
+        }
+        if (queryTenant != null) {
+            return queryTenant;
+        }
+        throw new DocumentNotFoundException(documentId);
+    }
 }
