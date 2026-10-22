@@ -15,9 +15,9 @@ import java.util.List;
 /**
  * Maps document failures onto structured HTTP responses: 400 for invalid input
  * and rule violations, 404 for an unknown document, link, content, or content
- * version, 409 for a version conflict, a duplicate link, or a lifecycle state
- * conflict (including an already-held document), and 413 for over-limit
- * content.
+ * version, 409 for a version conflict, a duplicate link, an already-deleted
+ * content tombstone, or a lifecycle state conflict (including an already-held
+ * document), 410 for tombstoned content, and 413 for over-limit content.
  */
 @RestControllerAdvice
 public class ApiExceptionHandler {
@@ -37,6 +37,18 @@ public class ApiExceptionHandler {
     @ResponseStatus(HttpStatus.NOT_FOUND)
     public ApiError contentVersionNotFound(ContentVersionNotFoundException ex) {
         return new ApiError("CONTENT_VERSION_NOT_FOUND", ex.getMessage());
+    }
+
+    @ExceptionHandler(ContentDeletedException.class)
+    @ResponseStatus(HttpStatus.GONE)
+    public ApiError contentDeleted(ContentDeletedException ex) {
+        return new ApiError(DocumentContentRules.CONTENT_DELETED, ex.getMessage());
+    }
+
+    @ExceptionHandler(ContentAlreadyDeletedException.class)
+    @ResponseStatus(HttpStatus.CONFLICT)
+    public ApiError contentAlreadyDeleted(ContentAlreadyDeletedException ex) {
+        return new ApiError(DocumentContentRules.CONTENT_ALREADY_DELETED, ex.getMessage());
     }
 
     @ExceptionHandler(FileTooLargeException.class)

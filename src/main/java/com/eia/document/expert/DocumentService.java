@@ -64,6 +64,18 @@ public class DocumentService {
     }
 
     /**
+     * Tenant-scoped read that keeps the document row locked for the rest of the
+     * caller transaction. Content tombstoning uses it so a legal hold placed
+     * concurrently either commits first (and blocks the delete) or waits until
+     * the tombstone is committed.
+     */
+    @Transactional
+    public Document getForUpdate(UUID tenantId, UUID id) {
+        return repository.findByIdForUpdate(tenantId, id)
+                .orElseThrow(() -> new DocumentNotFoundException(id));
+    }
+
+    /**
      * Search projection used by the shell and EntityPicker. The response shape
      * is the shared {@code {query, limit, items}} envelope; each item exposes
      * {@code id}, {@code label}, {@code secondary}, {@code status}, and

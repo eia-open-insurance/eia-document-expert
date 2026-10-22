@@ -16,14 +16,21 @@ import java.util.UUID;
 /**
  * Event factory for stored document content.
  *
- * <p>The event is written to the outbox in the same transaction as the
- * revision row. {@code DocumentContent} is its own aggregate, keyed by the
- * document id; the revision number is the aggregate version, so every upload
- * produces a new event instead of colliding with the previous upload's outbox
- * unique key. The payload repeats the revision as {@code version}.</p>
+ * <p>The event is written to the outbox in the same transaction as the content
+ * mutation. {@code DocumentContent} is its own aggregate, keyed by the document
+ * id; the revision number is the aggregate version, so every upload produces a
+ * new event instead of colliding with the previous upload's outbox unique key.
+ * The upload payload repeats the revision as {@code version}.</p>
+ *
+ * <p>A content delete writes {@code document.content.deleted} at the version it
+ * tombstones. The payload carries the document identity and the retained file
+ * metadata, plus the deletion timestamp; the deterministic event id uses the
+ * event type as well, so it cannot collide with the upload fact of the same
+ * revision.</p>
  */
 final class DocumentContentEvents {
     static final String UPLOADED = "document.content.uploaded";
+    static final String DELETED = "document.content.deleted";
 
     private static final String VERTICAL = "document";
     private static final String AGGREGATE_TYPE = "DocumentContent";
@@ -57,6 +64,46 @@ final class DocumentContentEvents {
                 .aggregateType(AGGREGATE_TYPE)
                 .aggregateId(document.id())
                 .aggregateVersion(content.version())
+                .sequence(0)
+                .actor(EventActor.system("eia-document-expert"))
+                .subject(EventSubject.of(VERTICAL, "document-content", document.id(),
+                        document.documentNumber()))
+                .links(List.of())
+                .data(data)
+                .metadata(EventMetadata.v1(SOURCE_BUILD))
+                .build();
+    }
+
+    /**
+     * Tombstone fact. The payload is exactly the document identity, the
+     * retained file metadata, and the moment the bytes were cleared:
+     * {@code {documentId, documentNumber, fileName, sizeBytes, sha256,
+     * deletedAt}}. The aggregate version is the revision that was tombstoned.
+     */
+    static EventEnvelope deleted(Document document, DocumentContentMetadata content, Instant now) {
+        Map<String, Object> data = new LinkedHashMap<>();
+        data.put("documentId", document.id());
+        data.put("documentNumber", document.documentNumber());
+        data.put("fileName", content.fileName());
+        data.put("sizeBytes", content.sizeBytes());
+        data.put("sha256", content.sha256());
+        data.put("deletedAt", now.toString());
+
+        UUID eventId = EventIds.deterministic(
+                document.tenantId(), AGGREGATE_TYPE, document.id(),
+                content.currentVersion(), DELETED);
+        return EventEnvelope.builder()
+                .eventId(eventId)
+                .eventType(DELETED)
+                .eventVersion(1)
+                .occurredAt(now)
+                .recordedAt(now)
+                .tenantId(document.tenantId())
+                .book(Book.DIRECT)
+                .vertical(VERTICAL)
+                .aggregateType(AGGREGATE_TYPE)
+                .aggregateId(document.id())
+                .aggregateVersion(content.currentVersion())
                 .sequence(0)
                 .actor(EventActor.system("eia-document-expert"))
                 .subject(EventSubject.of(VERTICAL, "document-content", document.id(),

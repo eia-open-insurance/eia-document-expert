@@ -56,9 +56,10 @@ CREATE TABLE IF NOT EXISTS document_content (
     content_type VARCHAR(128) NOT NULL,
     size_bytes BIGINT NOT NULL,
     sha256 CHAR(64) NOT NULL,
-    content BYTEA NOT NULL,
+    content BYTEA,
     current_version INTEGER NOT NULL DEFAULT 1,
     uploaded_at TIMESTAMP WITH TIME ZONE NOT NULL,
+    deleted_at TIMESTAMP WITH TIME ZONE,
     CONSTRAINT fk_document_content_document
         FOREIGN KEY (document_id) REFERENCES document (id) ON DELETE CASCADE
 );
@@ -66,6 +67,13 @@ CREATE TABLE IF NOT EXISTS document_content (
 -- Mirrors the production migration for databases created before versioning.
 ALTER TABLE document_content
     ADD COLUMN IF NOT EXISTS current_version INTEGER NOT NULL DEFAULT 1;
+
+-- H2 mirror of the content-tombstone migration: nullable bytes plus the
+-- deletion timestamp. Both statements are idempotent.
+ALTER TABLE document_content
+    ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMP WITH TIME ZONE;
+ALTER TABLE document_content
+    ALTER COLUMN content DROP NOT NULL;
 
 -- H2-compatible copy of the immutable content revision table.
 CREATE TABLE IF NOT EXISTS document_content_version (
@@ -77,13 +85,20 @@ CREATE TABLE IF NOT EXISTS document_content_version (
     content_type VARCHAR(128) NOT NULL,
     size_bytes BIGINT NOT NULL,
     sha256 CHAR(64) NOT NULL,
-    content BYTEA NOT NULL,
+    content BYTEA,
     uploaded_at TIMESTAMP WITH TIME ZONE NOT NULL,
+    deleted_at TIMESTAMP WITH TIME ZONE,
     CONSTRAINT fk_document_content_version_document
         FOREIGN KEY (document_id) REFERENCES document (id) ON DELETE CASCADE,
     CONSTRAINT uq_document_content_version
         UNIQUE (document_id, version)
 );
+
+-- H2 mirror of the revision tombstone migration.
+ALTER TABLE document_content_version
+    ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMP WITH TIME ZONE;
+ALTER TABLE document_content_version
+    ALTER COLUMN content DROP NOT NULL;
 
 CREATE INDEX IF NOT EXISTS idx_document_content_version_document
     ON document_content_version (document_id, version DESC);
@@ -91,10 +106,11 @@ CREATE INDEX IF NOT EXISTS idx_document_content_version_document
 -- Backfill content written before revisions existed as version 1.
 INSERT INTO document_content_version (
     id, document_id, tenant_id, version, file_name, content_type, size_bytes,
-    sha256, content, uploaded_at
+    sha256, content, uploaded_at, deleted_at
 )
 SELECT RANDOM_UUID(), c.document_id, c.tenant_id, 1, c.file_name,
-       c.content_type, c.size_bytes, c.sha256, c.content, c.uploaded_at
+       c.content_type, c.size_bytes, c.sha256, c.content, c.uploaded_at,
+       c.deleted_at
   FROM document_content c
  WHERE NOT EXISTS (
        SELECT 1

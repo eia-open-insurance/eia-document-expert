@@ -1,6 +1,7 @@
 package com.eia.document.expert;
 
 import org.springframework.http.HttpHeaders;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.InvalidMediaTypeException;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
@@ -19,18 +20,29 @@ import java.util.UUID;
  *       the file MIME type, and {@code X-File-Name} is the URL-encoded
  *       filename. An empty body is {@code 400 EMPTY_CONTENT}; over 10 MiB is
  *       {@code 413 FILE_TOO_LARGE}.</li>
+ *   <li>{@code DELETE .../content} tombstones the content: bytes are cleared
+ *       for the current pointer and every revision and {@code deletedAt} is
+ *       recorded, while the filename, MIME type, size, digest, and version stay
+ *       readable. It answers {@code 204}; missing content is {@code 404
+ *       CONTENT_NOT_FOUND}, a document under legal hold is {@code 409
+ *       DOCUMENT_ON_LEGAL_HOLD}, and a repeated delete is {@code 409
+ *       CONTENT_ALREADY_DELETED}.</li>
  *   <li>{@code GET .../content} returns the current bytes with the stored MIME
  *       type, an attachment disposition, {@code X-Content-SHA256}, and
- *       {@code X-Content-Version}.</li>
+ *       {@code X-Content-Version}. Tombstoned content is {@code 410
+ *       CONTENT_DELETED}.</li>
  *   <li>{@code GET .../content/metadata} returns the current metadata without
- *       bytes, including {@code currentVersion}; a document with no stored
- *       content is {@code 404 CONTENT_NOT_FOUND}.</li>
+ *       bytes, including {@code currentVersion}, nullable {@code deletedAt},
+ *       and a derived {@code deleted} boolean; a document with no stored
+ *       content is {@code 404 CONTENT_NOT_FOUND}. Metadata stays readable
+ *       after a tombstone.</li>
  *   <li>{@code GET .../content/versions} lists revision metadata newest first
  *       as {@code {documentId, version, fileName, contentType, sizeBytes,
  *       sha256, uploadedAt}}.</li>
  *   <li>{@code GET .../content/versions/{version}} downloads one revision
  *       with the same headers as the current download. An unknown revision is
- *       {@code 404 CONTENT_VERSION_NOT_FOUND}.</li>
+ *       {@code 404 CONTENT_VERSION_NOT_FOUND}; a tombstoned revision is
+ *       {@code 410 CONTENT_DELETED}.</li>
  * </ul>
  *
  * <p>The tenant comes from {@code X-EIA-Tenant}; the internal {@code tenantId}
@@ -62,6 +74,16 @@ public class DocumentContentController {
         UUID tenantId = TenantResolver.resolveForContent(headerTenant, queryTenant, documentId);
         String fileName = DocumentContentRules.decodeFileName(encodedFileName);
         return service.upload(tenantId, documentId, fileName, contentType, content);
+    }
+
+    @DeleteMapping("/{documentId}/content")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    public void delete(
+            @RequestHeader(name = TENANT_HEADER, required = false) UUID headerTenant,
+            @RequestParam(name = "tenantId", required = false) UUID queryTenant,
+            @PathVariable UUID documentId) {
+        UUID tenantId = TenantResolver.resolveForContent(headerTenant, queryTenant, documentId);
+        service.deleteContent(tenantId, documentId);
     }
 
     @GetMapping("/{documentId}/content")

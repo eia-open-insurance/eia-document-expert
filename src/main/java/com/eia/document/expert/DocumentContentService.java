@@ -21,6 +21,14 @@ import java.util.UUID;
  * {@code document.content.uploaded} fact to the transactional outbox in the
  * same transaction. Downloads of the current revision read the pointer;
  * downloads of an older revision read the matching history row.</p>
+ *
+ * <p>A content delete is a tombstone, not a row delete: it clears the bytes of
+ * the current pointer and every revision, records {@code deletedAt}, and keeps
+ * the file metadata. A tombstone is refused while the document is
+ * {@code ON_HOLD} and is written to the outbox as
+ * {@code document.content.deleted} atomically with the bytes being cleared.
+ * Downloads of tombstoned content answer {@code 410 CONTENT_DELETED}; repeating
+ * a delete answers {@code 409 CONTENT_ALREADY_DELETED}.</p>
  */
 @Service
 public class DocumentContentService {
@@ -57,15 +65,48 @@ public class DocumentContentService {
     }
 
     /**
+     * Tombstones the stored content of a document. The tenant-scoped document
+     * and content must exist ({@code 404 NOT_FOUND} / {@code 404
+     * CONTENT_NOT_FOUND}); a document under legal hold is {@code 409
+     * DOCUMENT_ON_LEGAL_HOLD} and is left untouched (SPEC DOC-06). The delete
+     * clears the bytes of the current pointer and every revision, keeps their
+     * metadata, and writes the {@code document.content.deleted} fact in the
+     * same transaction. Repeating the delete is {@code 409
+     * CONTENT_ALREADY_DELETED} and writes no second fact.
+     */
+    @Transactional
+    public void deleteContent(UUID tenantId, UUID documentId) {
+        Document document = documents.getForUpdate(tenantId, documentId);
+        DocumentContentMetadata current = repository.findMetadataForUpdate(tenantId, documentId)
+                .orElseThrow(() -> new ContentNotFoundException(documentId));
+        if (current.deletedAt() != null) {
+            throw new ContentAlreadyDeletedException(documentId);
+        }
+        DocumentContentRules.validateDelete(document);
+
+        Instant now = Instant.now();
+        if (!repository.tombstone(tenantId, documentId, now)) {
+            throw new ContentAlreadyDeletedException(documentId);
+        }
+        outbox.insert(OutboxEvent.fromEnvelope(
+                DocumentContentEvents.deleted(document, current, now)));
+    }
+
+    /**
      * Returns the bytes of the current revision. A missing document is
      * {@code 404 NOT_FOUND}; a document without content is
-     * {@code 404 CONTENT_NOT_FOUND}.
+     * {@code 404 CONTENT_NOT_FOUND}; tombstoned content is
+     * {@code 410 CONTENT_DELETED}.
      */
     @Transactional(readOnly = true)
     public DocumentContent getContent(UUID tenantId, UUID documentId) {
         documents.get(tenantId, documentId);
-        return repository.findContent(tenantId, documentId)
+        DocumentContent content = repository.findContent(tenantId, documentId)
                 .orElseThrow(() -> new ContentNotFoundException(documentId));
+        if (content.deletedAt() != null) {
+            throw new ContentDeletedException(documentId);
+        }
+        return content;
     }
 
     @Transactional(readOnly = true)
@@ -88,7 +129,8 @@ public class DocumentContentService {
     /**
      * Returns the stored bytes of one revision. The document must be visible
      * under the tenant; an unknown revision is
-     * {@code 404 CONTENT_VERSION_NOT_FOUND}.
+     * {@code 404 CONTENT_VERSION_NOT_FOUND} and a tombstoned revision is
+     * {@code 410 CONTENT_DELETED}.
      */
     @Transactional(readOnly = true)
     public DocumentContentVersion getVersionContent(UUID tenantId, UUID documentId, int version) {
@@ -96,7 +138,11 @@ public class DocumentContentService {
         if (version < 1) {
             throw new ContentVersionNotFoundException(documentId, version);
         }
-        return repository.findVersionContent(tenantId, documentId, version)
+        DocumentContentVersion content = repository.findVersionContent(tenantId, documentId, version)
                 .orElseThrow(() -> new ContentVersionNotFoundException(documentId, version));
+        if (content.deletedAt() != null) {
+            throw new ContentDeletedException(documentId);
+        }
+        return content;
     }
 }

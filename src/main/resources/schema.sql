@@ -59,9 +59,11 @@ CREATE INDEX IF NOT EXISTS idx_document_link_subject
 
 -- Current content pointer for a document. At most one row exists per document;
 -- an upload replaces the metadata and bytes in place and advances
--- current_version to the revision it just wrote. The immutable revision rows
--- live in document_content_version. The foreign key cascades so disposing the
--- document removes the pointer and every stored revision.
+-- current_version to the revision it just wrote. A content tombstone keeps the
+-- metadata and nulls content while recording deleted_at; a later upload clears
+-- the tombstone and appends a new revision. The immutable revision rows live in
+-- document_content_version. The foreign key cascades so disposing the document
+-- removes the pointer and every stored revision.
 CREATE TABLE IF NOT EXISTS document_content (
     document_id UUID PRIMARY KEY,
     tenant_id UUID NOT NULL,
@@ -69,9 +71,10 @@ CREATE TABLE IF NOT EXISTS document_content (
     content_type VARCHAR(128) NOT NULL,
     size_bytes BIGINT NOT NULL,
     sha256 CHAR(64) NOT NULL,
-    content BYTEA NOT NULL,
+    content BYTEA,
     current_version INTEGER NOT NULL DEFAULT 1,
     uploaded_at TIMESTAMPTZ NOT NULL,
+    deleted_at TIMESTAMPTZ,
     CONSTRAINT fk_document_content_document
         FOREIGN KEY (document_id) REFERENCES document (id) ON DELETE CASCADE
 );
@@ -81,6 +84,16 @@ CREATE TABLE IF NOT EXISTS document_content (
 -- legacy column is left in place and is no longer read.
 ALTER TABLE document_content
     ADD COLUMN IF NOT EXISTS current_version INTEGER NOT NULL DEFAULT 1;
+
+-- Content tombstones: deleted_at records when the bytes were cleared. The
+-- content column becomes nullable so a tombstone can keep the file metadata
+-- (name, type, size, digest, version) without retaining the bytes. Both ALTERs
+-- are idempotent so databases created before tombstoning pick them up on the
+-- next start.
+ALTER TABLE document_content
+    ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ;
+ALTER TABLE document_content
+    ALTER COLUMN content DROP NOT NULL;
 
 -- Immutable content revisions. (document_id, version) identifies a revision
 -- and the index serves the newest-first version list.
@@ -93,13 +106,22 @@ CREATE TABLE IF NOT EXISTS document_content_version (
     content_type VARCHAR(128) NOT NULL,
     size_bytes BIGINT NOT NULL,
     sha256 CHAR(64) NOT NULL,
-    content BYTEA NOT NULL,
+    content BYTEA,
     uploaded_at TIMESTAMPTZ NOT NULL,
+    deleted_at TIMESTAMPTZ,
     CONSTRAINT fk_document_content_version_document
         FOREIGN KEY (document_id) REFERENCES document (id) ON DELETE CASCADE,
     CONSTRAINT uq_document_content_version
         UNIQUE (document_id, version)
 );
+
+-- The revision table mirrors the tombstone columns. A delete clears the bytes
+-- and sets deleted_at on every revision while retaining its metadata, so the
+-- history remains auditable after the content is gone.
+ALTER TABLE document_content_version
+    ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ;
+ALTER TABLE document_content_version
+    ALTER COLUMN content DROP NOT NULL;
 
 CREATE INDEX IF NOT EXISTS idx_document_content_version_document
     ON document_content_version (document_id, version DESC);
@@ -109,10 +131,11 @@ CREATE INDEX IF NOT EXISTS idx_document_content_version_document
 -- when more than one instance starts at once.
 INSERT INTO document_content_version (
     id, document_id, tenant_id, version, file_name, content_type, size_bytes,
-    sha256, content, uploaded_at
+    sha256, content, uploaded_at, deleted_at
 )
 SELECT gen_random_uuid(), c.document_id, c.tenant_id, 1, c.file_name,
-       c.content_type, c.size_bytes, c.sha256, c.content, c.uploaded_at
+       c.content_type, c.size_bytes, c.sha256, c.content, c.uploaded_at,
+       c.deleted_at
   FROM document_content c
  WHERE NOT EXISTS (
        SELECT 1

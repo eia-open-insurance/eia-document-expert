@@ -109,6 +109,20 @@ public class DocumentRepository {
                 """.formatted(COLUMNS), MAPPER, tenantId, id).stream().findFirst();
     }
 
+    /**
+     * Tenant-scoped read that locks the document row until the caller
+     * transaction ends. A content delete uses it so the legal-hold state it
+     * checks cannot change before the tombstone commits.
+     */
+    public Optional<Document> findByIdForUpdate(UUID tenantId, UUID id) {
+        return jdbc.query("""
+                SELECT %s
+                  FROM document
+                 WHERE tenant_id = ? AND id = ?
+                 FOR UPDATE
+                """.formatted(COLUMNS), MAPPER, tenantId, id).stream().findFirst();
+    }
+
     public Document create(UUID tenantId, CreateDocumentRequest request, Instant now) {
         UUID id = UUID.randomUUID();
         String documentNumber = nextDocumentNumber(now);

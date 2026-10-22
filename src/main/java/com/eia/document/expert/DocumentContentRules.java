@@ -38,7 +38,24 @@ public final class DocumentContentRules {
     public static final String INVALID_CONTENT_TYPE = "INVALID_CONTENT_TYPE";
     public static final String CONTENT_TYPE_TOO_LONG = "CONTENT_TYPE_TOO_LONG";
 
+    public static final String CONTENT_DELETED = "CONTENT_DELETED";
+    public static final String CONTENT_ALREADY_DELETED = "CONTENT_ALREADY_DELETED";
+
     private DocumentContentRules() {}
+
+    /**
+     * A legal hold freezes the record (SPEC DOC-06), including its content:
+     * tombstoning bytes under a hold would alter evidence. The service checks
+     * this before clearing anything, so a rejected delete leaves the content
+     * untouched and writes no event.
+     */
+    public static void validateDelete(Document document) {
+        if (DocumentStatus.of(document.status()) == DocumentStatus.ON_HOLD) {
+            throw new DocumentConflictException(DocumentRules.DOCUMENT_ON_LEGAL_HOLD,
+                    "document " + document.id()
+                            + " is under legal hold; content deletion is blocked (SPEC DOC-06)");
+        }
+    }
 
     /**
      * Rejects a zero-byte upload and anything above the 10 MiB ceiling before

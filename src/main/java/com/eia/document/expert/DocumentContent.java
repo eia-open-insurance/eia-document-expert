@@ -7,7 +7,8 @@ import java.util.UUID;
  * Internal row read of the {@code document_content} current pointer.
  * {@link #currentVersion()} names the revision in
  * {@code document_content_version} whose metadata is copied here for the
- * current read and download routes.
+ * current read and download routes. {@link #deletedAt()} is non-null after a
+ * tombstone; {@code content} is then {@code null}.
  */
 record DocumentContent(
         UUID documentId,
@@ -18,11 +19,12 @@ record DocumentContent(
         String sha256,
         byte[] content,
         Instant uploadedAt,
-        int currentVersion
+        int currentVersion,
+        Instant deletedAt
 ) {
     DocumentContentMetadata metadata() {
         return new DocumentContentMetadata(
                 documentId, fileName, contentType, sizeBytes, sha256, uploadedAt,
-                currentVersion);
+                currentVersion, deletedAt, deletedAt != null);
     }
 }

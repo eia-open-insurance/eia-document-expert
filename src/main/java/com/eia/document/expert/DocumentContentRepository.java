@@ -23,6 +23,11 @@ import java.util.UUID;
  * {@code document_content_version}, so a download of an older revision does not
  * depend on the pointer.</p>
  *
+ * <p>A content tombstone clears the bytes of the pointer and of every revision
+ * and records {@code deleted_at}, while keeping the file metadata. An upload
+ * after a delete clears the pointer tombstone and appends a new, downloadable
+ * revision; earlier tombstoned revisions stay tombstoned.</p>
+ *
  * <p>Revision allocation locks the pointer row with {@code SELECT ... FOR
  * UPDATE}. The first upload inserts the pointer with {@code current_version =
  * 0} and the following update advances it to 1; a concurrent first upload
@@ -35,14 +40,14 @@ import java.util.UUID;
 public class DocumentContentRepository {
     private static final String METADATA_COLUMNS = """
             document_id, tenant_id, file_name, content_type, size_bytes, sha256,
-            uploaded_at, current_version
+            uploaded_at, current_version, deleted_at
             """;
 
     private static final String CONTENT_COLUMNS = METADATA_COLUMNS + ", content";
 
     private static final String VERSION_COLUMNS = """
             id, document_id, tenant_id, version, file_name, content_type,
-            size_bytes, sha256, content, uploaded_at
+            size_bytes, sha256, content, uploaded_at, deleted_at
             """;
 
     private static final String VERSION_METADATA_COLUMNS = """
@@ -77,7 +82,7 @@ public class DocumentContentRepository {
     private static final String UPDATE_POINTER_SQL = """
             UPDATE document_content
                SET file_name = ?, content_type = ?, size_bytes = ?, sha256 = ?,
-                   content = ?, current_version = ?, uploaded_at = ?
+                   content = ?, current_version = ?, uploaded_at = ?, deleted_at = NULL
              WHERE document_id = ? AND tenant_id = ?
             """;
 
@@ -86,6 +91,18 @@ public class DocumentContentRepository {
                 id, document_id, tenant_id, version, file_name, content_type,
                 size_bytes, sha256, content, uploaded_at
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """;
+
+    private static final String TOMBSTONE_POINTER_SQL = """
+            UPDATE document_content
+               SET content = NULL, deleted_at = ?
+             WHERE document_id = ? AND tenant_id = ? AND deleted_at IS NULL
+            """;
+
+    private static final String TOMBSTONE_VERSIONS_SQL = """
+            UPDATE document_content_version
+               SET content = NULL, deleted_at = ?
+             WHERE document_id = ? AND tenant_id = ? AND deleted_at IS NULL
             """;
 
     private final JdbcTemplate jdbc;
@@ -131,7 +148,7 @@ public class DocumentContentRepository {
         }
 
         return new DocumentContentVersion(id, documentId, tenantId, nextVersion, fileName,
-                contentType, size, sha256, content, uploadedAt);
+                contentType, size, sha256, content, uploadedAt, null);
     }
 
     public Optional<DocumentContent> findContent(UUID tenantId, UUID documentId) {
@@ -150,6 +167,44 @@ public class DocumentContentRepository {
                  WHERE document_id = ? AND tenant_id = ?
                 """.formatted(METADATA_COLUMNS), METADATA_MAPPER, documentId, tenantId)
                 .stream().findFirst();
+    }
+
+    /**
+     * Locks the current pointer and returns its metadata. A content delete uses
+     * this so two concurrent deletes serialize: the first tombstones, the
+     * second observes the committed {@code deleted_at} and reports the conflict
+     * instead of writing a duplicate fact.
+     */
+    public Optional<DocumentContentMetadata> findMetadataForUpdate(UUID tenantId, UUID documentId) {
+        return jdbc.query("""
+                SELECT %s
+                  FROM document_content
+                 WHERE document_id = ? AND tenant_id = ?
+                 FOR UPDATE
+                """.formatted(METADATA_COLUMNS), METADATA_MAPPER, documentId, tenantId)
+                .stream().findFirst();
+    }
+
+    /**
+     * Tombstones the current pointer and every not-yet-deleted revision of the
+     * document by clearing their bytes and stamping {@code deleted_at}. The
+     * filename, MIME type, size, digest, version, and upload time are kept.
+     *
+     * <p>The condition on {@code deleted_at IS NULL} makes the write the
+     * duplicate guard. It returns {@code false} when the pointer was already
+     * tombstoned, so the caller reports {@code CONTENT_ALREADY_DELETED} and
+     * writes no event. A later content upload clears the pointer tombstone and
+     * appends a fresh non-deleted revision; older revisions keep their original
+     * deletion timestamps.</p>
+     */
+    public boolean tombstone(UUID tenantId, UUID documentId, Instant deletedAt) {
+        OffsetDateTime timestamp = deletedAt.atOffset(ZoneOffset.UTC);
+        int updated = jdbc.update(TOMBSTONE_POINTER_SQL, timestamp, documentId, tenantId);
+        if (updated != 1) {
+            return false;
+        }
+        jdbc.update(TOMBSTONE_VERSIONS_SQL, timestamp, documentId, tenantId);
+        return true;
     }
 
     public Optional<DocumentContentVersion> findVersionContent(UUID tenantId, UUID documentId,
@@ -202,12 +257,14 @@ public class DocumentContentRepository {
                 rs.getString("sha256"),
                 rs.getBytes("content"),
                 rs.getObject("uploaded_at", OffsetDateTime.class).toInstant(),
-                rs.getInt("current_version")
+                rs.getInt("current_version"),
+                instant(rs.getObject("deleted_at", OffsetDateTime.class))
         );
     }
 
     private static DocumentContentMetadata mapMetadata(ResultSet rs, int rowNum)
             throws SQLException {
+        Instant deletedAt = instant(rs.getObject("deleted_at", OffsetDateTime.class));
         return new DocumentContentMetadata(
                 rs.getObject("document_id", UUID.class),
                 rs.getString("file_name"),
@@ -215,7 +272,9 @@ public class DocumentContentRepository {
                 rs.getLong("size_bytes"),
                 rs.getString("sha256"),
                 rs.getObject("uploaded_at", OffsetDateTime.class).toInstant(),
-                rs.getInt("current_version")
+                rs.getInt("current_version"),
+                deletedAt,
+                deletedAt != null
         );
     }
 
@@ -231,7 +290,8 @@ public class DocumentContentRepository {
                 rs.getLong("size_bytes"),
                 rs.getString("sha256"),
                 rs.getBytes("content"),
-                rs.getObject("uploaded_at", OffsetDateTime.class).toInstant()
+                rs.getObject("uploaded_at", OffsetDateTime.class).toInstant(),
+                instant(rs.getObject("deleted_at", OffsetDateTime.class))
         );
     }
 
@@ -246,5 +306,9 @@ public class DocumentContentRepository {
                 rs.getString("sha256"),
                 rs.getObject("uploaded_at", OffsetDateTime.class).toInstant()
         );
+    }
+
+    private static Instant instant(OffsetDateTime timestamp) {
+        return timestamp == null ? null : timestamp.toInstant();
     }
 }
