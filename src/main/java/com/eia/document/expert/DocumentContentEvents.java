@@ -35,6 +35,7 @@ final class DocumentContentEvents {
     private static final String VERTICAL = "document";
     private static final String AGGREGATE_TYPE = "DocumentContent";
     private static final String SOURCE_BUILD = "eia-document-expert@0.1.0-SNAPSHOT";
+    private static final String SYSTEM_ACTOR_NAME = "eia-document-expert";
 
     private DocumentContentEvents() {
     }
@@ -81,6 +82,16 @@ final class DocumentContentEvents {
      * deletedAt}}. The aggregate version is the revision that was tombstoned.
      */
     static EventEnvelope deleted(Document document, DocumentContentMetadata content, Instant now) {
+        return deleted(document, content, now, null);
+    }
+
+    /**
+     * Tombstone fact attributed to the supplied system actor id. Disposition
+     * passes its job actor so the content event and the disposition event share
+     * the same attribution.
+     */
+    static EventEnvelope deleted(Document document, DocumentContentMetadata content, Instant now,
+                                 UUID actorId) {
         Map<String, Object> data = new LinkedHashMap<>();
         data.put("documentId", document.id());
         data.put("documentNumber", document.documentNumber());
@@ -105,12 +116,18 @@ final class DocumentContentEvents {
                 .aggregateId(document.id())
                 .aggregateVersion(content.currentVersion())
                 .sequence(0)
-                .actor(EventActor.system("eia-document-expert"))
+                .actor(actor(actorId))
                 .subject(EventSubject.of(VERTICAL, "document-content", document.id(),
                         document.documentNumber()))
                 .links(List.of())
                 .data(data)
                 .metadata(EventMetadata.v1(SOURCE_BUILD))
                 .build();
+    }
+
+    private static EventActor actor(UUID actorId) {
+        return actorId == null
+                ? EventActor.system(SYSTEM_ACTOR_NAME)
+                : new EventActor("SYSTEM", actorId, SYSTEM_ACTOR_NAME, null, null);
     }
 }

@@ -43,6 +43,7 @@ final class DocumentEvents {
     private static final String VERTICAL = "document";
     private static final String AGGREGATE_TYPE = "Document";
     private static final String SOURCE_BUILD = "eia-document-expert@0.1.0-SNAPSHOT";
+    private static final String SYSTEM_ACTOR_NAME = "eia-document-expert";
 
     private DocumentEvents() {
     }
@@ -104,16 +105,30 @@ final class DocumentEvents {
 
     /** Disposition tombstone fact for a document moving to {@code DISPOSED}. */
     static EventEnvelope disposed(Document document, String reason, Instant now) {
-        return lifecycleEvent(document, DISPOSED, reason, now);
+        return disposed(document, reason, now, null);
+    }
+
+    /**
+     * Disposition fact attributed to the given system actor id. The retention
+     * job supplies its configured actor so an unattended disposition is
+     * distinguishable from the default system attribution.
+     */
+    static EventEnvelope disposed(Document document, String reason, Instant now, UUID actorId) {
+        return lifecycleEvent(document, DISPOSED, reason, now, actorId);
     }
 
     private static EventEnvelope lifecycleEvent(
             Document document, String eventType, String reason, Instant now) {
+        return lifecycleEvent(document, eventType, reason, now, null);
+    }
+
+    private static EventEnvelope lifecycleEvent(
+            Document document, String eventType, String reason, Instant now, UUID actorId) {
         Map<String, Object> data = identity(document);
         data.put("reason", reason);
         data.put("status", document.status());
 
-        return envelope(document, eventType, document.version() + 1L, now, data);
+        return envelope(document, eventType, document.version() + 1L, now, data, actorId);
     }
 
     private static Map<String, Object> identity(Document document) {
@@ -126,6 +141,12 @@ final class DocumentEvents {
     private static EventEnvelope envelope(
             Document document, String eventType, long aggregateVersion, Instant now,
             Map<String, Object> data) {
+        return envelope(document, eventType, aggregateVersion, now, data, null);
+    }
+
+    private static EventEnvelope envelope(
+            Document document, String eventType, long aggregateVersion, Instant now,
+            Map<String, Object> data, UUID actorId) {
         UUID eventId = EventIds.deterministic(
                 document.tenantId(), AGGREGATE_TYPE, document.id(), aggregateVersion, eventType);
         return EventEnvelope.builder()
@@ -141,11 +162,22 @@ final class DocumentEvents {
                 .aggregateId(document.id())
                 .aggregateVersion(aggregateVersion)
                 .sequence(0)
-                .actor(EventActor.system("eia-document-expert"))
+                .actor(systemActor(actorId))
                 .subject(EventSubject.of(VERTICAL, "document", document.id(), document.documentNumber()))
                 .links(List.of())
                 .data(data)
                 .metadata(EventMetadata.v1(SOURCE_BUILD))
                 .build();
+    }
+
+    /**
+     * The default system actor has no id, matching every other document event.
+     * A job that supplies an actor id keeps the SYSTEM type but carries the
+     * dedicated identity in the canonical actor object.
+     */
+    private static EventActor systemActor(UUID actorId) {
+        return actorId == null
+                ? EventActor.system(SYSTEM_ACTOR_NAME)
+                : new EventActor("SYSTEM", actorId, SYSTEM_ACTOR_NAME, null, null);
     }
 }

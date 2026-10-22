@@ -15,7 +15,10 @@ spring:
     init:
       mode: always
   quartz:
-    auto-startup: ${eia.outbox.enabled:false}
+    # Quartz hosts both the outbox dispatcher and the retention disposition
+    # job, so it must start whenever either feature is enabled. Jobs are only
+    # registered by their own @ConditionalOnProperty configurations.
+    auto-startup: ${EIA_QUARTZ_AUTO_STARTUP:true}
     job-store-type: memory
 management:
   endpoints:
@@ -31,4 +34,12 @@ eia:
     claim-lease: ${EIA_OUTBOX_CLAIM_LEASE:2m}
     interval: ${EIA_OUTBOX_INTERVAL:2s}
     signing-secret: ${EIA_OUTBOX_SIGNING_SECRET:}
+  document:
+    retention:
+      # Automatic disposition is opt-in. When enabled, the Quartz job scans
+      # due documents daily at 02:00 UTC and disposes at most batch-size per run.
+      enabled: ${EIA_DOCUMENT_RETENTION_ENABLED:false}
+      cron: "${EIA_DOCUMENT_RETENTION_CRON:0 0 2 * * ?}"
+      batch-size: ${EIA_DOCUMENT_RETENTION_BATCH_SIZE:100}
+      actor-id: ${EIA_DOCUMENT_RETENTION_ACTOR_ID:00000000-0000-0000-0000-000000000000}
 

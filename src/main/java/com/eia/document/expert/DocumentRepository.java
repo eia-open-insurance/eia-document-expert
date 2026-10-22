@@ -31,6 +31,25 @@ public class DocumentRepository {
 
     private static final RowMapper<Document> MAPPER = DocumentRepository::map;
 
+    /**
+     * Statuses the disposition rules allow. The due query uses the same set as
+     * {@link DocumentRules#DISPOSABLE_STATUSES}; {@code ON_HOLD} and
+     * {@code DISPOSED} are excluded by construction.
+     */
+    private static final String DISPOSABLE_STATUSES_SQL = String.join(", ",
+            DocumentRules.DISPOSABLE_STATUSES.stream()
+                    .map(status -> "'" + status.name() + "'")
+                    .sorted()
+                    .toList());
+
+    private static final String DUE_PREDICATE = """
+              retention_until IS NOT NULL
+              AND retention_until <= ?
+              AND status IN (%s)
+              AND held_at IS NULL
+              AND disposed_at IS NULL
+            """.formatted(DISPOSABLE_STATUSES_SQL);
+
     private final JdbcTemplate jdbc;
 
     public DocumentRepository(JdbcTemplate jdbc) {
@@ -99,6 +118,42 @@ public class DocumentRepository {
 
         sql.append(" ORDER BY created_at DESC, document_number DESC");
         return jdbc.query(sql.toString(), MAPPER, args.toArray());
+    }
+
+    /**
+     * Tenants that currently have at least one disposition-due document. The
+     * retention job uses this to keep every candidate read tenant-scoped rather
+     * than issuing one cross-tenant scan.
+     */
+    public List<UUID> findTenantsWithDueDocuments(LocalDate today) {
+        return jdbc.queryForList("""
+                SELECT DISTINCT tenant_id
+                  FROM document
+                 WHERE %s
+                 ORDER BY tenant_id
+                """.formatted(DUE_PREDICATE), UUID.class, today);
+    }
+
+    /**
+     * Tenant-scoped due-document selection for the retention disposition job.
+     * A document is due when its retention date is on or before {@code today},
+     * its status is one the disposition rules allow, and neither a legal hold
+     * nor a previous disposition is recorded. The limit is applied after the
+     * retention-date ordering so the oldest records are disposed first.
+     */
+    public List<DueDocument> findDueForDisposition(UUID tenantId, LocalDate today, int limit) {
+        if (limit < 1) {
+            throw new IllegalArgumentException("limit must be at least 1");
+        }
+        return jdbc.query("""
+                SELECT tenant_id, id, retention_until
+                  FROM document
+                 WHERE tenant_id = ?
+                   AND %s
+                 ORDER BY retention_until, created_at, id
+                 LIMIT ?
+                """.formatted(DUE_PREDICATE), DocumentRepository::mapDue,
+                tenantId, today, limit);
     }
 
     public Optional<Document> findById(UUID tenantId, UUID id) {
@@ -229,6 +284,13 @@ public class DocumentRepository {
         return "%" + needle + "%";
     }
 
+    private static DueDocument mapDue(ResultSet rs, int rowNum) throws SQLException {
+        return new DueDocument(
+                rs.getObject("tenant_id", UUID.class),
+                rs.getObject("id", UUID.class),
+                rs.getObject("retention_until", LocalDate.class));
+    }
+
     private static Document map(ResultSet rs, int rowNum) throws SQLException {
         return new Document(
                 rs.getObject("id", UUID.class),
@@ -251,5 +313,12 @@ public class DocumentRepository {
 
     private static Instant instant(OffsetDateTime timestamp) {
         return timestamp == null ? null : timestamp.toInstant();
+    }
+
+    /**
+     * Minimal projection for a disposition candidate: the tenant is carried
+     * with the row so the job can call the tenant-scoped disposition path.
+     */
+    public record DueDocument(UUID tenantId, UUID documentId, LocalDate retentionUntil) {
     }
 }

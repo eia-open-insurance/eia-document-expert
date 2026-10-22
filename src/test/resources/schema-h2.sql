@@ -26,6 +26,10 @@ ALTER TABLE document ADD COLUMN IF NOT EXISTS held_at TIMESTAMP WITH TIME ZONE;
 ALTER TABLE document ADD COLUMN IF NOT EXISTS status_before_hold VARCHAR(16);
 ALTER TABLE document ADD COLUMN IF NOT EXISTS disposed_at TIMESTAMP WITH TIME ZONE;
 
+-- H2 mirror of the retention-disposition scan index.
+CREATE INDEX IF NOT EXISTS idx_document_retention_due
+    ON document (status, retention_until);
+
 -- H2-compatible copy of the document_link table.
 CREATE TABLE IF NOT EXISTS document_link (
     id UUID PRIMARY KEY,

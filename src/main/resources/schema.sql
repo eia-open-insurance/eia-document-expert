@@ -34,6 +34,12 @@ CREATE INDEX IF NOT EXISTS idx_document_tenant_created
 CREATE INDEX IF NOT EXISTS idx_document_tenant_status
     ON document (tenant_id, status);
 
+-- Retention disposition scans by status and retention date; the legal-hold and
+-- disposition columns are part of the due predicate, so the index keeps the
+-- daily scan off a sequential read.
+CREATE INDEX IF NOT EXISTS idx_document_retention_due
+    ON document (status, retention_until);
+
 -- A document may be associated with records owned by other verticals. The
 -- target id is authoritative in its owning vertical; linked_reference is only
 -- a display snapshot. Idempotent so schema.sql can run on every start.

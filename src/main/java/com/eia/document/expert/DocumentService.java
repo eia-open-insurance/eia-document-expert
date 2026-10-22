@@ -222,14 +222,24 @@ public class DocumentService {
      */
     @Transactional
     public Document dispose(UUID tenantId, UUID id, String reason) {
+        return dispose(tenantId, id, reason, null);
+    }
+
+    /**
+     * Disposition variant used by the retention job. The actor id is carried by
+     * the disposition and content-tombstone facts; {@code null} keeps the
+     * default system attribution used by the manual API.
+     */
+    @Transactional
+    public Document dispose(UUID tenantId, UUID id, String reason, UUID actorId) {
         Document current = get(tenantId, id);
         DocumentRules.validateDispose(current, LocalDate.now(ZoneOffset.UTC));
         String dispositionReason = normalizeDispositionReason(reason);
         Instant now = Instant.now();
         Document after = repository.dispose(current, now);
         outbox.insert(OutboxEvent.fromEnvelope(
-                DocumentEvents.disposed(after, dispositionReason, now)));
-        tombstoneContentForDisposal(after, now);
+                DocumentEvents.disposed(after, dispositionReason, now, actorId)));
+        tombstoneContentForDisposal(after, now, actorId);
         return after;
     }
 
@@ -241,7 +251,7 @@ public class DocumentService {
      * Missing content and an existing tombstone are both no-ops: disposition
      * still succeeds with only its own fact.
      */
-    private void tombstoneContentForDisposal(Document document, Instant now) {
+    private void tombstoneContentForDisposal(Document document, Instant now, UUID actorId) {
         Optional<DocumentContentMetadata> content = contentRepository
                 .findMetadataForUpdate(document.tenantId(), document.id())
                 .filter(metadata -> metadata.deletedAt() == null);
@@ -252,7 +262,7 @@ public class DocumentService {
             return;
         }
         outbox.insert(OutboxEvent.fromEnvelope(
-                DocumentContentEvents.deleted(document, content.get(), now)));
+                DocumentContentEvents.deleted(document, content.get(), now, actorId)));
     }
 
     private static DocumentSearchItem toSearchItem(Document document) {
