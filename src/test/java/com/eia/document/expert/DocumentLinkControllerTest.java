@@ -50,6 +50,9 @@ class DocumentLinkControllerTest {
     private DocumentLinkRepository linkRepository;
 
     @MockitoBean
+    private DocumentContentRepository contentRepository;
+
+    @MockitoBean
     private OutboxRepository outbox;
 
     @Test

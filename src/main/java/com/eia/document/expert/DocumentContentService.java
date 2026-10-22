@@ -28,7 +28,9 @@ import java.util.UUID;
  * {@code ON_HOLD} and is written to the outbox as
  * {@code document.content.deleted} atomically with the bytes being cleared.
  * Downloads of tombstoned content answer {@code 410 CONTENT_DELETED}; repeating
- * a delete answers {@code 409 CONTENT_ALREADY_DELETED}.</p>
+ * a delete answers {@code 409 CONTENT_ALREADY_DELETED}. Disposition applies the
+ * same tombstone to live content (see {@link DocumentService#dispose}), except
+ * that absent or already-tombstoned content does not fail the disposition.</p>
  */
 @Service
 public class DocumentContentService {

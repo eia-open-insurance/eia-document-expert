@@ -62,8 +62,9 @@ CREATE INDEX IF NOT EXISTS idx_document_link_subject
 -- current_version to the revision it just wrote. A content tombstone keeps the
 -- metadata and nulls content while recording deleted_at; a later upload clears
 -- the tombstone and appends a new revision. The immutable revision rows live in
--- document_content_version. The foreign key cascades so disposing the document
--- removes the pointer and every stored revision.
+-- document_content_version. The foreign key cascades so deleting a document
+-- row removes the pointer and every stored revision; disposition tombstones the
+-- bytes in place without deleting the document row.
 CREATE TABLE IF NOT EXISTS document_content (
     document_id UUID PRIMARY KEY,
     tenant_id UUID NOT NULL,

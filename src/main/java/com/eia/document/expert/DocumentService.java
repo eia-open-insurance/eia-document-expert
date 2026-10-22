@@ -11,6 +11,7 @@ import java.time.LocalDate;
 import java.time.ZoneOffset;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Optional;
 import java.util.UUID;
 
 /**
@@ -30,13 +31,16 @@ public class DocumentService {
 
     private final DocumentRepository repository;
     private final DocumentLinkRepository linkRepository;
+    private final DocumentContentRepository contentRepository;
     private final OutboxRepository outbox;
 
     public DocumentService(DocumentRepository repository,
                            DocumentLinkRepository linkRepository,
+                           DocumentContentRepository contentRepository,
                            OutboxRepository outbox) {
         this.repository = repository;
         this.linkRepository = linkRepository;
+        this.contentRepository = contentRepository;
         this.outbox = outbox;
     }
 
@@ -207,6 +211,14 @@ public class DocumentService {
      * hold applies. The disposition reason travels in the
      * {@code document.document.disposed} fact; the approval and certificate
      * steps from SPEC 11.6.8 are out of this slice.
+     *
+     * <p>Disposition also removes the stored content bytes. When the document
+     * still has live content, its current pointer and every revision are
+     * tombstoned in the same transaction and the matching
+     * {@code document.content.deleted} fact, with the same payload as an
+     * explicit content delete, is appended. A document without content, or
+     * whose content is already tombstoned, is disposed with only
+     * {@code document.document.disposed}.</p>
      */
     @Transactional
     public Document dispose(UUID tenantId, UUID id, String reason) {
@@ -217,7 +229,30 @@ public class DocumentService {
         Document after = repository.dispose(current, now);
         outbox.insert(OutboxEvent.fromEnvelope(
                 DocumentEvents.disposed(after, dispositionReason, now)));
+        tombstoneContentForDisposal(after, now);
         return after;
+    }
+
+    /**
+     * Tombstones the content that disposition must not leave behind. The
+     * pointer row is locked while it is read, so a concurrent explicit content
+     * delete either commits first (leaving nothing for this method to do) or
+     * waits for the disposition to commit and then observes the tombstone.
+     * Missing content and an existing tombstone are both no-ops: disposition
+     * still succeeds with only its own fact.
+     */
+    private void tombstoneContentForDisposal(Document document, Instant now) {
+        Optional<DocumentContentMetadata> content = contentRepository
+                .findMetadataForUpdate(document.tenantId(), document.id())
+                .filter(metadata -> metadata.deletedAt() == null);
+        if (content.isEmpty()) {
+            return;
+        }
+        if (!contentRepository.tombstone(document.tenantId(), document.id(), now)) {
+            return;
+        }
+        outbox.insert(OutboxEvent.fromEnvelope(
+                DocumentContentEvents.deleted(document, content.get(), now)));
     }
 
     private static DocumentSearchItem toSearchItem(Document document) {

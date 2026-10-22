@@ -193,9 +193,12 @@ public class DocumentContentRepository {
      * <p>The condition on {@code deleted_at IS NULL} makes the write the
      * duplicate guard. It returns {@code false} when the pointer was already
      * tombstoned, so the caller reports {@code CONTENT_ALREADY_DELETED} and
-     * writes no event. A later content upload clears the pointer tombstone and
-     * appends a fresh non-deleted revision; older revisions keep their original
-     * deletion timestamps.</p>
+     * writes no event. Disposition uses the same write for a document that
+     * still has live content; an absent or already-tombstoned pointer is a
+     * no-op there, so disposition succeeds without a content fact. A later
+     * content upload clears the pointer tombstone and appends a fresh
+     * non-deleted revision; older revisions keep their original deletion
+     * timestamps.</p>
      */
     public boolean tombstone(UUID tenantId, UUID documentId, Instant deletedAt) {
         OffsetDateTime timestamp = deletedAt.atOffset(ZoneOffset.UTC);
